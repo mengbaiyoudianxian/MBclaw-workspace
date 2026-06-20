@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MBclaw</string>
+    <string name="app_desc">MBclaw AI助手 Root版 — 由孟白打造</string>
+    <string name="accessibility_service_description">MBclaw 无障碍服务 — 用于自动操作和屏幕辅助</string>
+</resources>
