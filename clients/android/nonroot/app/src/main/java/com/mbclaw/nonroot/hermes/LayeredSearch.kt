@@ -140,6 +140,20 @@ class LayeredSearch(
         }
     }
 
+    /** 跨维度搜索 (蓝图07-lessons: 搜索应同时返回项目/会话/消息/总结/关键词) */
+    fun crossDimensionalSearch(query: String, db: LocalDB, limit: Int = 20): List<SearchResult> {
+        val results = mutableListOf<SearchResult>()
+        // 消息维度
+        db.readableDatabase.rawQuery("SELECT content FROM messages WHERE content LIKE ? LIMIT 5", arrayOf("%$query%")).use { c -> while (c.moveToNext()) results.add(SearchResult("消息", c.getString(0).take(100), 0.5f, "L1")) }
+        // 总结维度
+        db.readableDatabase.rawQuery("SELECT topic, conclusions FROM summaries WHERE topic LIKE ? OR conclusions LIKE ? LIMIT 5", arrayOf("%$query%", "%$query%")).use { c -> while (c.moveToNext()) results.add(SearchResult("总结:${c.getString(0)}", c.getString(1)?.take(100) ?: "", 0.6f, "L1")) }
+        // 关键词维度
+        db.readableDatabase.rawQuery("SELECT keyword FROM keywords WHERE keyword LIKE ? LIMIT 5", arrayOf("%$query%")).use { c -> while (c.moveToNext()) results.add(SearchResult("关键词", c.getString(0), 0.7f, "L1")) }
+        // 话题维度
+        db.readableDatabase.rawQuery("SELECT name, summary FROM topic_tree WHERE name LIKE ? OR summary LIKE ? LIMIT 5", arrayOf("%$query%", "%$query%")).use { c -> while (c.moveToNext()) results.add(SearchResult("话题:${c.getString(0)}", c.getString(1)?.take(100) ?: "", 0.5f, "L1")) }
+        return results.distinctBy { it.key + it.value }.take(limit)
+    }
+
     /** 将搜索结果格式化为索引引用 — 不注入原话，只给指针 */
     fun formatForInjection(results: List<SearchResult>): String {
         if (results.isEmpty()) return ""

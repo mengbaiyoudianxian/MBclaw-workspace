@@ -44,22 +44,37 @@ class RealEngine(
     }
 
     // ═══════════════════════════════════════════
-    // 🔍 双Key评审 — LLM自评
+    // 🔍 双Key评审 — 蓝图4.4: Key1→Key2→Key1 循环1-6次, 4维度评分(代码质量/逻辑/安全/完整性) 32/40阈值
     // ═══════════════════════════════════════════
-    suspend fun dualKeyReview(content: String): String {
+    suspend fun dualKeyReview(content: String, maxRounds: Int = 3): String {
         if (!isReady()) return "❌ 请先配置AI提供商"
         if (content.isBlank()) return "无可评审内容"
 
-        val prompt = listOf(
-            ApiMsg("system", "你是MBclaw的代码/内容评审引擎。对以下内容进行严格评审：\n1. 质量评分 (1-10)\n2. 逻辑问题 (如有)\n3. 安全性问题 (如有)\n4. 改进建议 (1-2条)\n\n用中文，直接输出，不要客套话。"),
-            ApiMsg("user", "请评审以下内容:\n---\n${content.take(3000)}\n---")
-        )
-
         return try {
-            withContext(Dispatchers.IO) {
-                DirectApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, prompt)
+            var currentContent = content
+            val results = mutableListOf<String>()
+            for (round in 1..maxRounds.coerceAtMost(6)) {
+                val reviewPrompt = listOf(
+                    ApiMsg("system", "你是Key2评审引擎。严格按4维度评分:\n代码质量(0-10): \n逻辑正确性(0-10): \n安全性(0-10): \n完整性(0-10): \n总分(0-40): \n问题列表:\n改进建议:\n\n用中文，严格格式。"),
+                    ApiMsg("user", "评审第${round}轮:\n---\n${currentContent.take(3000)}\n---")
+                )
+                val review = withContext(Dispatchers.IO) { DirectApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, reviewPrompt) }
+                results.add("[第${round}轮]\n$review")
+
+                // 解析总分
+                val totalScore = Regex("""总分.*?(\d+)""").find(review)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                if (totalScore >= 32) { results.add("✅ 评审通过 (总分$totalScore/40 ≥ 32)"); break }
+                if (round < maxRounds) {
+                    val revisePrompt = listOf(
+                        ApiMsg("system", "你是Key1执行引擎。根据Key2的评审意见修改内容。"),
+                        ApiMsg("user", "原始内容:\n${currentContent.take(2000)}\n\n评审意见:\n$review\n\n请修改后重新输出完整内容。")
+                    )
+                    currentContent = withContext(Dispatchers.IO) { DirectApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, revisePrompt) }
+                    results.add("[Key1修改稿]\n${currentContent.take(300)}...")
+                }
             }
-        } catch (e: Exception) { "🔍 评审引擎异常: ${e.message}" }
+            results.joinToString("\n\n")
+        } catch (e: Exception) { "🔍 评审异常: ${e.message}" }
     }
 
     // ═══════════════════════════════════════════
@@ -150,6 +165,43 @@ class RealEngine(
                 resp.trim().take(30) to 0.5f
             }
         } catch (e: Exception) { "分类失败" to 0f }
+    }
+
+    // ═══════════════════════════════════════════
+    // 🌙 Dream 提升到 MEMORY.md (蓝图P0: 收集信号→评分→通过阈值→写入)
+    // ═══════════════════════════════════════════
+    suspend fun dreamAndPromote(sessionId: String = ""): String {
+        val dreamResult = dream(sessionId)
+        // 提取关键洞察写入 MEMORY.md
+        val lines = dreamResult.split("\n").filter { it.trim().startsWith("-") || it.trim().startsWith("•") || it.trim().startsWith("*") }
+        for (line in lines.take(5)) {
+            db.saveMemory("durable_${System.currentTimeMillis()}", line.trim(), "dream_promoted")
+        }
+        return dreamResult
+    }
+
+    // ═══════════════════════════════════════════
+    // 📝 反思5字段 (蓝图4.5: findings/problems/solutions/reusable/conflicts)
+    // ═══════════════════════════════════════════
+    data class Reflection(val findings: List<String>, val problems: List<String>, val solutions: List<String>, val reusable: List<String>, val conflicts: List<String>)
+
+    suspend fun reflection(text: String): Reflection {
+        if (!isReady() || text.isBlank()) return Reflection(listOf("无数据"), emptyList(), emptyList(), emptyList(), emptyList())
+        val prompt = listOf(
+            ApiMsg("system", "你是MBclaw反思引擎。从以下对话中提取5个字段，每字段用分号分隔多个条目:\nfindings(新发现): \nproblems(遇到的问题): \nsolutions(解决方案): \nreusable(可复用): \nconflicts(潜在冲突): \n\n用中文，每字段一行，条目用分号分隔。"),
+            ApiMsg("user", "对话:\n${text.take(2000)}\n\n请输出反思结果。")
+        )
+        return try {
+            val resp = withContext(Dispatchers.IO) { DirectApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, prompt) }
+            val lines = resp.split("\n").filter { it.isNotBlank() }
+            var f = emptyList<String>(); var p = emptyList<String>(); var s = emptyList<String>(); var r = emptyList<String>(); var c = emptyList<String>()
+            for (line in lines) {
+                val content = line.substringAfter(":").substringAfter("：").trim()
+                val items = content.split(";").filter { it.isNotBlank() }.ifEmpty { listOf(content) }
+                when { line.contains("finding", ignoreCase = true) || line.contains("发现") -> f = items; line.contains("problem", ignoreCase = true) || line.contains("问题") -> p = items; line.contains("solution", ignoreCase = true) || line.contains("解决") -> s = items; line.contains("reusable", ignoreCase = true) || line.contains("复用") -> r = items; line.contains("conflict", ignoreCase = true) || line.contains("冲突") -> c = items }
+            }
+            Reflection(f.ifEmpty { listOf("无新发现") }, p.ifEmpty { listOf("无问题") }, s.ifEmpty { listOf("无方案") }, r.ifEmpty { listOf("无可复用") }, c.ifEmpty { listOf("无冲突") })
+        } catch (_: Exception) { Reflection(listOf("反思异常"), emptyList(), emptyList(), emptyList(), emptyList()) }
     }
 
     // ═══════════════════════════════════════════

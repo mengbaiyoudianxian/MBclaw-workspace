@@ -35,6 +35,15 @@ class AgentLoop(
     private val http = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).build()
 
     suspend fun run(userMessage: String, sessionId: String, maxTurns: Int = 5): String = withContext(Dispatchers.IO) {
+        // 蓝图P7: 保存checkpoint
+        val taskId = System.currentTimeMillis()
+        com.mbclaw.nonroot.hermes.BlueprintComplete(context, db).taskEnqueue("agent_loop", 50, userMessage)
+
+        // 蓝图08 P0: 检测上下文长度,接近限制触发Memory Flush
+        val history = db.getMessages(sessionId, 20)
+        if (history.size > 15) {
+            memoryFlush(sessionId, history)
+        }
         // ═══ PRE: 代码强制构建上下文 (不等LLM请求) ═══
         val ctx = enforcer.buildContext(userMessage, sessionId)
         val hadMemories = ctx.memoryInjection.isNotBlank()
@@ -49,8 +58,7 @@ class AgentLoop(
             messages.add(AgentMsg("system", ctx.memoryInjection))
         }
 
-        // 加载历史
-        val history = db.getMessages(sessionId, 20)
+        // 历史已加载
         for (msg in history.takeLast(10)) {
             messages.add(AgentMsg(msg.role, msg.content))
         }
@@ -88,12 +96,17 @@ class AgentLoop(
             lastResponse = enforcer.correctResponse(lastResponse)
         }
 
-        // 自动记录 action_memory
-        db.writableDatabase.execSQL(
-            "INSERT INTO action_memories (session_id, action) VALUES (?, ?)",
-            arrayOf(sessionId, "agent_loop: $userMessage → $lastResponse")
-        )
+        // P1: 记录thinking到messages
+        db.writableDatabase.execSQL("UPDATE messages SET thinking=?, message_type='thinking' WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1", arrayOf("agent_loop_${turns}turns", sessionId))
+
         return@withContext lastResponse
+    }
+
+    // 蓝图08 P0: Memory Flush — 上下文接近限制时静默保存
+    private suspend fun memoryFlush(sessionId: String, history: List<com.mbclaw.nonroot.data.MessageRow>) {
+        val summary = history.takeLast(10).joinToString("; ") { it.content.take(100) }
+        db.saveMemory("flush_${sessionId}_${System.currentTimeMillis()}", summary, "memory_flush")
+        // 通知enforcer下次注入时包含flush内容
     }
 
     // ── function calling API ──
