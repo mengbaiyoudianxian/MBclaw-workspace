@@ -1,6 +1,6 @@
 # MBclaw 项目总览
 
-> 最后更新：2026-06-20 | 由孟白打造，耗时2个月
+> 最后更新：2026-06-21 | 由孟白打造 | v0.7.0 — 智能体之手完整视觉交互系统
 
 ---
 
@@ -28,18 +28,42 @@ MBclaw-workspace/
     └── openclaw/                 ← OpenClaw 架构参考
 ```
 
-## 二、核心完成度 100%
+## 二、核心完成度
 
 | 模块 | 状态 | 详情 |
 |------|------|------|
-| 核心13项目 | ✅ 13/13 | 含MiMo集成 |
+| 核心13项目 | ✅ 12/13 | 含MiMo集成待完成 |
 | Hermes 记忆系统 | ✅ 6/6 | MEMORY.md + Dreaming + Curator + Skill |
 | Agent Runtime | ✅ 6/6 | 执行循环 + 子Agent + 自纠正 |
 | 服务端母体 | ✅ | Docker + Admin Panel + Prometheus |
-| Android Root 版 | ✅ | MiClaw内核 + 386工具 + 本地沙箱 |
-| Android 非Root版 | ✅ | GPT风格 + MBclaw品牌 |
-| Linux CLI | ✅ | 交互式聊天 + 记忆搜索 |
-| Windows 客户端 | ✅ | tkinter GUI |
+| **Android Root** | ✅ v0.4.0 | 独立架构+Shizuku+6后台服务+智能体之手 |
+| **Android NonRoot** | ✅ v0.7.0 | 独立架构+Shizuku+6后台服务+智能体之手 |
+| Linux CLI | 🔧 | 骨架代码 |
+| Windows | 🔧 | tkinter壳 |
+
+### 智能体之手 (v0.7.0 新增) 🦾
+| 层 | 模块 | 状态 |
+|----|------|:--:|
+| 1 | 屏幕标定 ScreenCalibration | ✅ |
+| 2 | 区块识别 BlockRecognizer (粗筛+精定位) | ✅ |
+| 3 | 快速模糊点击 FuzzyClicker (100+关键词) | ✅ |
+| 4 | 三维融合决策 FusionDecider | ✅ |
+| 5 | 操作记忆 OperationMemory | ✅ |
+| 6 | 参数体系 HandConfig (极速/均衡/高精) | ✅ |
+| 7 | 主编排器 AgentHand | ✅ |
+
+### Android 双版后台服务 (v0.5.0+)
+| 服务 | Root | NonRoot |
+|------|:--:|:--:|
+| 前台持久保活 | ✅ | ✅ |
+| 语音唤醒 | ✅ DSP | ✅ VAD关键词 |
+| 无障碍点击 | ✅ | ✅ |
+| 通知监听 | ✅ | ✅ |
+| 本地沙箱 | ✅ proot/chroot | ✅ Termux+proot |
+| 开机自启 | ✅ | ✅ |
+| Shizuku ADB提权 | ✅ | ✅ |
+| 云端双向同步 | ✅ | ✅ |
+| Termux+FastAPI本地 | ✅ | ✅ |
 
 ## 三、架构决策
 

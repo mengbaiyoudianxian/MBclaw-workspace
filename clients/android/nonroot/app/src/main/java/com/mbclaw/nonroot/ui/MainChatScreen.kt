@@ -31,6 +31,7 @@ fun MainChatScreen(viewModel: ChatViewModel = viewModel()) {
     val uiState by viewModel.uiState.collectAsState()
     var inputText by remember { mutableStateOf("") }
     var showSetup by remember { mutableStateOf(!viewModel.settings.isConfigured() || uiState.messages.isEmpty()) }
+    var showHand by remember { mutableStateOf(false) }
     var showSessions by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
@@ -63,6 +64,9 @@ fun MainChatScreen(viewModel: ChatViewModel = viewModel()) {
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showHand = true }) {
+                        Text("🦾", style = MaterialTheme.typography.titleMedium)
+                    }
                     IconButton(onClick = { viewModel.searchMemory(inputText.ifBlank { "最近" }) }) {
                         Icon(Icons.Filled.Search, "记忆")
                     }
@@ -165,6 +169,11 @@ fun MainChatScreen(viewModel: ChatViewModel = viewModel()) {
             viewModel.refreshProvider()
             showSetup = false
         })
+    }
+
+    // ── 智能体之手 ──
+    if (showHand) {
+        AgentHandScreen(onBack = { showHand = false })
     }
 }
 

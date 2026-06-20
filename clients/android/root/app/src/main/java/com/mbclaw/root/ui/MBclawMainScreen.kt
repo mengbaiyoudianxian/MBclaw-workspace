@@ -23,11 +23,32 @@ fun MBclawMainScreen() {
     val agent = remember { MBclawAgent(ctx.applicationContext as Application) }
     var tab by remember { mutableIntStateOf(0) }
     var showSetup by remember { mutableStateOf(!agent.settings.isConfigured()) }
+    var showHand by remember { mutableStateOf(false) }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Row(verticalAlignment = Alignment.CenterVertically) { Text("🤖 MBclaw", fontWeight = FontWeight.Bold); Spacer(Modifier.width(8.dp)); Surface(shape = RoundedCornerShape(4.dp), color = if (agent.settings.isConfigured()) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.error.copy(alpha = 0.15f)) { Text(if (agent.settings.isConfigured()) "⚡${agent.settings.modelName}" else "⚠未配置", modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp), style = MaterialTheme.typography.labelSmall) } } }, actions = { IconButton(onClick = { showSetup = true }) { Icon(Icons.Filled.Settings, "配置") } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)) },
-        bottomBar = { NavigationBar { listOf("对话" to Icons.Filled.Chat, "工具" to Icons.Filled.Build, "我的" to Icons.Filled.Person).forEachIndexed { i, (label, icon) -> NavigationBarItem(icon = { Icon(icon, label) }, label = { Text(label) }, selected = tab == i, onClick = { tab = i }) } } },
-    ) { padding -> Box(Modifier.padding(padding)) { AnimatedContent(tab, transitionSpec = { fadeIn() togetherWith fadeOut() }) { when (it) { 0 -> ChatScreen(agent); 1 -> ToolsScreen(); 2 -> ProfileScreen(agent, onSetupProvider = { showSetup = true }) } } } }
+        topBar = { TopAppBar(
+            title = { Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("🤖 MBclaw", fontWeight = FontWeight.Bold); Spacer(Modifier.width(8.dp))
+                Surface(shape = RoundedCornerShape(4.dp), color = if (agent.settings.isConfigured())
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.error.copy(alpha = 0.15f)) {
+                    Text(if (agent.settings.isConfigured()) "⚡${agent.settings.modelName}" else "⚠未配置",
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp), style = MaterialTheme.typography.labelSmall) }
+            } },
+            actions = {
+                IconButton(onClick = { showHand = true }) { Text("🦾", style = MaterialTheme.typography.titleMedium) }
+                IconButton(onClick = { showSetup = true }) { Icon(Icons.Filled.Settings, "配置") }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface))
+        },
+        bottomBar = { NavigationBar { listOf("对话", "工具", "我的").forEachIndexed { i, label ->
+            NavigationBarItem(icon = { Icon(when(i){0->Icons.Filled.Chat;1->Icons.Filled.Build;else->Icons.Filled.Person}, label) },
+                label = { Text(label) }, selected = tab == i, onClick = { tab = i }) } } },
+    ) { padding -> Box(Modifier.padding(padding)) {
+        AnimatedContent(tab, transitionSpec = { fadeIn() togetherWith fadeOut() }) {
+            when (it) { 0 -> ChatScreen(agent); 1 -> ToolsScreen(); 2 -> ProfileScreen(agent, onSetupProvider = { showSetup = true }) }
+        }
+    } }
 
     if (showSetup) ProviderSetupScreen(settings = agent.settings, onDone = { showSetup = false })
+    if (showHand) com.mbclaw.root.ui.AgentHandScreen(onBack = { showHand = false })
 }
