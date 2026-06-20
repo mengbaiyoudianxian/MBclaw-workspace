@@ -21,6 +21,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.mbclaw.nonroot.viewmodel.ChatViewModel
 import com.mbclaw.nonroot.viewmodel.UIMessage
 import com.mbclaw.nonroot.data.SessionRow
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 
 /**
  * 主界面 — 本地优先，零依赖服务器
@@ -111,6 +113,41 @@ fun MainChatScreen(viewModel: ChatViewModel = viewModel()) {
 
             // ── 主聊天区 ──
             Column(Modifier.weight(1f)) {
+                // 记忆系统状态条
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(if (uiState.capability.contains("100%")) "☁100%" else "📱40%",
+                        style = MaterialTheme.typography.labelSmall)
+                    val stats = uiState.memoryStats
+                    Text("🧠${stats["memory"] ?: 0}", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("💬${stats["messages"] ?: 0}", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("🌳${stats["topic_tree_nodes"] ?: 0}", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("📸${stats["snapshots"] ?: 0}", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.width(2.dp))
+                    SmallFloatingActionButton(onClick = { viewModel.runDream() },
+                        modifier = Modifier.size(24.dp),
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer) { Text("🌙", style = MaterialTheme.typography.labelSmall) }
+                    SmallFloatingActionButton(onClick = { viewModel.showClassificationTree() },
+                        modifier = Modifier.size(24.dp),
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer) { Text("🌳", style = MaterialTheme.typography.labelSmall) }
+                    SmallFloatingActionButton(onClick = {
+                        val lastMsg = uiState.messages.lastOrNull()
+                        if (lastMsg != null) viewModel.runDualKeyReview(lastMsg.content)
+                    }, modifier = Modifier.size(24.dp),
+                        containerColor = MaterialTheme.colorScheme.primaryContainer) { Text("🔍", style = MaterialTheme.typography.labelSmall) }
+                    SmallFloatingActionButton(onClick = { viewModel.runCollision(listOf("记忆","AI","MBclaw","手机")) },
+                        modifier = Modifier.size(24.dp),
+                        containerColor = MaterialTheme.colorScheme.errorContainer) { Text("💥", style = MaterialTheme.typography.labelSmall) }
+                }
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 8.dp))
+
                 LazyColumn(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     state = listState,
