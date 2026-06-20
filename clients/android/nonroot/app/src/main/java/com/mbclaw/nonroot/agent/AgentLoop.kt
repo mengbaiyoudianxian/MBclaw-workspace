@@ -5,6 +5,7 @@ import com.mbclaw.nonroot.api.DirectApiClient
 import com.mbclaw.nonroot.data.LocalDB
 import com.mbclaw.nonroot.data.UserSettings
 import com.mbclaw.nonroot.hermes.RealEngine
+import com.mbclaw.nonroot.hermes.LayeredSearch
 import com.mbclaw.nonroot.model.ProviderCatalog
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
@@ -28,24 +29,25 @@ class AgentLoop(
 ) {
     private val realEngine = RealEngine(db, settings)
     private val toolExecutor = ToolExecutor(context, db, settings, realEngine)
+    private val layeredSearch = LayeredSearch(db, com.mbclaw.nonroot.hermes.TranscriptLogger(context))
+    private val enforcer = MBclawEnforcer(db, layeredSearch)
     private val gson = Gson()
     private val http = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).build()
 
-    private val systemPrompt = AgentMsg("system",
-        "你是 MBclaw Agent，由18岁的打工人孟白独立创造。\n" +
-        "你能通过工具调用控制这台手机：WiFi/蓝牙/飞行模式/亮度/音量/短信/电话/截图/点击/滑动/输入/打开App/搜索记忆/梦想整合/思维碰撞...\n" +
-        "规则:\n" +
-        "1. 用户让你做什么，你就调对应工具\n" +
-        "2. 每次只调一个工具，观察结果后再决定下一步\n" +
-        "3. 工具执行失败时，尝试备用方案\n" +
-        "4. 回复简洁，直接说做了什么\n" +
-        "5. 用中文"
-    )
-
-    // ── 带有 function calling 的 chat API 调用 ──
-
     suspend fun run(userMessage: String, sessionId: String, maxTurns: Int = 5): String = withContext(Dispatchers.IO) {
-        val messages = mutableListOf(systemPrompt)
+        // ═══ PRE: 代码强制构建上下文 (不等LLM请求) ═══
+        val ctx = enforcer.buildContext(userMessage, sessionId)
+        val hadMemories = ctx.memoryInjection.isNotBlank()
+
+        val messages = mutableListOf<AgentMsg>()
+        // 身份约束 (极简)
+        messages.add(AgentMsg("system", ctx.identityConstraint))
+        // 强制能力声明
+        messages.add(AgentMsg("system", ctx.capabilityInjection))
+        // 强制记忆注入
+        if (hadMemories) {
+            messages.add(AgentMsg("system", ctx.memoryInjection))
+        }
 
         // 加载历史
         val history = db.getMessages(sessionId, 20)
@@ -79,6 +81,12 @@ class AgentLoop(
         }
 
         if (lastResponse.isBlank()) lastResponse = "已达到最大轮次($maxTurns)，操作结束。"
+
+        // ═══ POST: 代码强制验证 + 修正 ═══
+        val check = enforcer.validateResponse(lastResponse, hadMemories)
+        if (!check.passed) {
+            lastResponse = enforcer.correctResponse(lastResponse)
+        }
 
         // 自动记录 action_memory
         db.writableDatabase.execSQL(

@@ -50,12 +50,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val uiState: StateFlow<ChatUiState> = _uiState
 
     // 系统提示词 — MBclaw 身份
-    private val systemPrompt = com.mbclaw.nonroot.api.ChatMessage(
-        role = "system",
-        content = "你是 MBclaw，由18岁的打工人孟白独立创造的 AI 助手。\n" +
-            "你能通过工具调用控制手机：WiFi/蓝牙/飞行模式/亮度/音量/短信/截图/点击/滑动/输入/App管理/记忆搜索/梦想整合...\n" +
-            "核心: 记住每一句话，主动帮助，简洁精准。你不是 ChatGPT，你是 MBclaw。"
-    )
+    // 不再靠prompt祈祷 — AgentLoop 用 MBclawEnforcer 代码强制执行
 
     init {
         viewModelScope.launch {
@@ -115,21 +110,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 )
 
-                // 构建消息列表: system + history + new
-                val apiMessages = mutableListOf(systemPrompt)
-                // 取最近 20 条历史作为上下文
-                val history = db.getMessages(sessionId, limit = 20)
-                for (msg in history.takeLast(20).dropLast(1)) { // 去掉刚加的 user msg
-                    apiMessages.add(ChatMessage(role = msg.role, content = msg.content))
-                }
-                // 注入 Hermes 记忆 (P6)
-                val memoryCtx = hermes.layeredSearch.formatForInjection(memories)
-                if (memoryCtx.isNotBlank()) {
-                    apiMessages.add(ChatMessage(role = "system", content = memoryCtx))
-                }
-                apiMessages.add(ChatMessage(role = "user", content = text))
-
-                // 调用 AgentLoop (带工具调用)
+                // AgentLoop 内置 MBclawEnforcer 代码级约束
+                // PRE: 强制注入记忆+工具+身份
+                // POST: 验证+修正响应
                 val reply = agentLoop.run(text, sessionId, maxTurns = 5)
 
                 db.saveMessage(sessionId, "assistant", reply, null)
