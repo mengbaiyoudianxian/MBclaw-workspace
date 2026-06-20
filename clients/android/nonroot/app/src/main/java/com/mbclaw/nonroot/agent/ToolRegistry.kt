@@ -55,6 +55,7 @@ object ToolRegistry {
         ToolDef("classify_conversation", "对当前对话进行语义分类", JSONObject("""{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}""")),
         ToolDef("dual_key_review", "用双Key评审一段内容", JSONObject("""{"type":"object","properties":{"content":{"type":"string"}},"required":["content"]}""")),
         ToolDef("collision_think", "思维碰撞产生创新点子", JSONObject("""{"type":"object","properties":{"keywords":{"type":"array","items":{"type":"string"}}},"required":["keywords"]}""")),
+        ToolDef("trigger_voice_assistant", "唤起手机自带语音助手(小爱/Google/Bixby)执行命令", JSONObject("""{"type":"object","properties":{"command":{"type":"string","description":"要执行的语音命令"}},"required":[]}""")),
         ToolDef("get_capability", "获取当前MBclaw能力级别(40%/100%)", JSONObject("""{"type":"object","properties":{}}""")),
         ToolDef("read_file", "读取本地文件内容", JSONObject("""{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}""")),
     )
