@@ -1,0 +1,30 @@
+# MBclaw Workspace
+# Top-level workspace — individual components have their own git repos in subdirectories
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Data
+*.db
+*.db-journal
+*.db-wal
+data/snapshots/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+*.pem
