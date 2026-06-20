@@ -106,10 +106,10 @@ fun MainChatScreen() {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 listOf(
-                    "🧠 记忆" to Icons.Filled.Memory,
+                    "🧠 记忆" to Icons.Filled.Search,
                     "🔍 搜索" to Icons.Filled.Search,
-                    "⚡ 技能" to Icons.Filled.Bolt,
-                    "📁 工具" to Icons.Filled.Folder,
+                    "⚡ 技能" to Icons.Filled.Star,
+                    "📁 工具" to Icons.Filled.Settings,
                 ).forEach { (label, icon) ->
                     SuggestionChip(
                         onClick = {

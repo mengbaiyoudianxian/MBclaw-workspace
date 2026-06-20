@@ -32,3 +32,8 @@ Thumbs.db
 # Sub-repos (managed independently with their own .git)
 /main/
 /reference/
+
+# Gradle build artifacts
+.gradle/
+**/build/
+!**/build/outputs/apk/**/*.apk

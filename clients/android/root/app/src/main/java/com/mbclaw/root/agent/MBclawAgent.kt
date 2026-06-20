@@ -5,6 +5,7 @@ import com.mbclaw.root.MBclawRootApp
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import okhttp3.MediaType.Companion.toMediaType
 
 /**
  * MBclaw Agent — 对话引擎
@@ -43,8 +44,8 @@ class MBclawAgent {
      */
     suspend fun chat(message: String): String {
         _isThinking.value = true
-        try {
-            return withContext(Dispatchers.IO) {
+        return try {
+            withContext(Dispatchers.IO) {
                 // 1. 本地规则快速匹配（离线）
                 val localResult = localMatch(message)
                 if (localResult != null) return@withContext localResult
@@ -125,7 +126,7 @@ class MBclawAgent {
                 .addHeader("Authorization", "Bearer ${app.mimoApiKey}")
                 .addHeader("Content-Type", "application/json")
                 .post(okhttp3.RequestBody.create(
-                    okhttp3.MediaType.parse("application/json"),
+                    "application/json".toMediaType(),
                     requestBody.toString()
                 ))
                 .build()
