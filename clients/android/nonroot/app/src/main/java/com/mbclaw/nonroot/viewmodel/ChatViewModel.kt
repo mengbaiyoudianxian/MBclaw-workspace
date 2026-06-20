@@ -9,6 +9,7 @@ import com.mbclaw.nonroot.data.LocalDB
 import com.mbclaw.nonroot.data.MemoryRow
 import com.mbclaw.nonroot.data.SessionRow
 import com.mbclaw.nonroot.data.UserSettings
+import com.mbclaw.nonroot.hermes.HermesMemory
 import com.mbclaw.nonroot.model.ProviderCatalog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,13 +28,14 @@ data class ChatUiState(
 data class UIMessage(
     val role: String,
     val content: String,
-    val memoryRefs: List<MemoryRow> = emptyList(),
+    val memoryRefs: List<com.mbclaw.nonroot.hermes.LayeredSearch.SearchResult> = emptyList(),
     val isError: Boolean = false,
 )
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val settings = UserSettings(app)
     val db = LocalDB(app)
+    val hermes = HermesMemory(app, db, settings)
 
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState
@@ -91,13 +93,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
         viewModelScope.launch {
             try {
-                // 搜索本地记忆，注入上下文
-                val memories = db.searchMemory(text, limit = 5)
-                val memoryContext = if (memories.isNotEmpty()) {
-                    "\n\n[相关记忆]\n" + memories.joinToString("\n") {
-                        "• ${it.key}: ${it.value.take(200)}"
-                    }
-                } else ""
+                // ── Hermes P6: 实时记忆预调用 (L1→L2→L3) ──
+                val memoryInjection = hermes.bootstrapSession(sessionId, text)
+                val memories = hermes.layeredSearch.search(
+                    com.mbclaw.nonroot.hermes.LayeredSearch.SearchContext(
+                        query = text, maxResults = 5,
+                        enableL3 = settings.utopiaEnabled,
+                        embeddingApiBaseUrl = settings.apiBaseUrl,
+                        embeddingApiKey = settings.apiKey,
+                    )
+                )
 
                 // 构建消息列表: system + history + new
                 val apiMessages = mutableListOf(systemPrompt)
@@ -106,12 +111,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 for (msg in history.takeLast(20).dropLast(1)) { // 去掉刚加的 user msg
                     apiMessages.add(ChatMessage(role = msg.role, content = msg.content))
                 }
-                // 注入记忆
-                if (memoryContext.isNotBlank()) {
-                    apiMessages.add(ChatMessage(
-                        role = "system",
-                        content = "以下是从用户记忆库中检索到的相关信息，请在回复中自然地引用：$memoryContext"
-                    ))
+                // 注入 Hermes 记忆 (P6)
+                val memoryCtx = hermes.layeredSearch.formatForInjection(memories)
+                if (memoryCtx.isNotBlank()) {
+                    apiMessages.add(ChatMessage(role = "system", content = memoryCtx))
                 }
                 apiMessages.add(ChatMessage(role = "user", content = text))
 
@@ -129,10 +132,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 )
 
                 db.saveMessage(sessionId, "assistant", reply, null)
-                // 自动提取记忆：如果回复较长，尝试提取关键信息
-                if (text.length > 10) {
-                    db.saveMemory("user_said", text, "chat_$sessionId")
-                }
+                // Hermes: 记录+分类 (P1+P2)
+                hermes.afterTurn(sessionId, text, reply)
 
                 _uiState.value = _uiState.value.copy(
                     messages = _uiState.value.messages + UIMessage(
