@@ -1,4 +1,4 @@
-package com.mbclaw.nonroot.data
+package com.mbclaw.root.data
 
 import android.content.ContentValues
 import android.content.Context

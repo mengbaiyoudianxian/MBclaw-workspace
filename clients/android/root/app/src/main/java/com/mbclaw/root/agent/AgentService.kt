@@ -15,7 +15,7 @@ import kotlinx.coroutines.*
  */
 class AgentService : Service() {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val agent = MBclawAgent()
+    private val agent by lazy { MBclawAgent(application as android.app.Application) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
