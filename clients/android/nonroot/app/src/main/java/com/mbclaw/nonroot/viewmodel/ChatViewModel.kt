@@ -4,7 +4,6 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mbclaw.nonroot.api.DirectApiClient
-import com.mbclaw.nonroot.api.ChatMessage
 import com.mbclaw.nonroot.data.LocalDB
 import com.mbclaw.nonroot.data.MemoryRow
 import com.mbclaw.nonroot.data.SessionRow
@@ -13,6 +12,7 @@ import com.mbclaw.nonroot.hermes.HermesMemory
 import com.mbclaw.nonroot.hermes.HybridEngine
 import com.mbclaw.nonroot.hermes.BlueprintComplete
 import com.mbclaw.nonroot.hermes.RealEngine
+import com.mbclaw.nonroot.agent.AgentLoop
 import com.mbclaw.nonroot.model.ProviderCatalog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -44,20 +44,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val hybrid = HybridEngine(app, db, settings)
     val blueprint = BlueprintComplete(app, db)
     val real = RealEngine(db, settings)
+    val agentLoop = AgentLoop(app, db, settings)
 
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState
 
     // 系统提示词 — MBclaw 身份
-    private val systemPrompt = ChatMessage(
+    private val systemPrompt = com.mbclaw.nonroot.api.ChatMessage(
         role = "system",
         content = "你是 MBclaw，由18岁的打工人孟白独立创造的 AI 助手。\n" +
-            "核心能力：\n" +
-            "- 记住用户说过的每一句话，跨会话回忆\n" +
-            "- 搜索本地记忆库，引用过去的讨论\n" +
-            "- 主动提供帮助，不是被动等待指令\n" +
-            "- 简洁、精准、有温度的回复风格\n" +
-            "你不是 ChatGPT，你不是 Claude，你是独一无二的 MBclaw。"
+            "你能通过工具调用控制手机：WiFi/蓝牙/飞行模式/亮度/音量/短信/截图/点击/滑动/输入/App管理/记忆搜索/梦想整合...\n" +
+            "核心: 记住每一句话，主动帮助，简洁精准。你不是 ChatGPT，你是 MBclaw。"
     )
 
     init {
@@ -132,18 +129,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 apiMessages.add(ChatMessage(role = "user", content = text))
 
-                // 调用配置的 API
-                val baseUrl = if (settings.apiBaseUrl.isNotBlank())
-                    settings.apiBaseUrl
-                else
-                    ProviderCatalog.find(settings.providerId)?.baseUrl ?: settings.apiBaseUrl
-
-                val reply = DirectApiClient.chat(
-                    baseUrl = baseUrl,
-                    apiKey = settings.apiKey,
-                    model = settings.modelName,
-                    messages = apiMessages,
-                )
+                // 调用 AgentLoop (带工具调用)
+                val reply = agentLoop.run(text, sessionId, maxTurns = 5)
 
                 db.saveMessage(sessionId, "assistant", reply, null)
                 // Hermes: 记录+分类 (P1+P2)
