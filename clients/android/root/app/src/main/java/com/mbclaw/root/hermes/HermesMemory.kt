@@ -26,7 +26,7 @@ class HermesMemory(private val context: Context, private val db: LocalDB, privat
     // 子模块
     val transcriptLogger = TranscriptLogger(context)
     val layeredSearch = LayeredSearch(db, transcriptLogger)
-    val classificationEngine = ClassificationEngine(db, transcriptLogger, layeredSearch)
+    val classificationEngine = ClassificationEngine(context, db, transcriptLogger, layeredSearch)
     val snapshotService = SnapshotService(context)
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())

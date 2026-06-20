@@ -22,8 +22,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // 启动后台 Agent 服务
-        MBclawRootApp.instance.agentManager.start()
+        // AgentService 由 BootReceiver 或用户手动启动
 
         setContent {
             MBclawTheme(darkTheme = true) {
@@ -36,6 +35,5 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        MBclawRootApp.instance.agentManager.stop()
     }
 }

@@ -54,54 +54,57 @@ class UserSettings(context: Context) {
 // ── 本地数据库 (SQLite) ──
 
 class LocalDB(context: Context) : SQLiteOpenHelper(
-    context, "mbclaw_local.db", null, 1
+    context, "mbclaw_local.db", null, 2  // v2: 蓝图完整schema
 ) {
     override fun onCreate(db: SQLiteDatabase) {
-        // 聊天消息
-        db.execSQL("""
-            CREATE TABLE messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                memory_refs TEXT
-            )
-        """)
-        // 会话
-        db.execSQL("""
-            CREATE TABLE sessions (
-                id TEXT PRIMARY KEY,
-                title TEXT,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            )
-        """)
-        // 记忆条目
-        db.execSQL("""
-            CREATE TABLE memory (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                key TEXT NOT NULL,
-                value TEXT NOT NULL,
-                source TEXT,
-                created_at INTEGER NOT NULL,
-                accessed_at INTEGER NOT NULL,
-                access_count INTEGER DEFAULT 0
-            )
-        """)
-        // 技能卡
-        db.execSQL("""
-            CREATE TABLE skills (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                description TEXT,
-                trigger_keywords TEXT,
-                created_at INTEGER NOT NULL
-            )
-        """)
+        // ── 核心表 ──
+        db.execSQL("CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, thinking TEXT DEFAULT '', message_type TEXT DEFAULT 'message' CHECK(message_type IN ('message','code_change','thinking','decision')), metadata TEXT DEFAULT '{}', created_at INTEGER NOT NULL, memory_refs TEXT)")
+        db.execSQL("CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, status TEXT DEFAULT 'active' CHECK(status IN ('active','completed','interrupted')), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)")
+        db.execSQL("CREATE TABLE memory (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, value TEXT NOT NULL, source TEXT, created_at INTEGER NOT NULL, accessed_at INTEGER NOT NULL, access_count INTEGER DEFAULT 0)")
+        db.execSQL("CREATE TABLE skills (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, description TEXT, trigger_keywords TEXT, created_at INTEGER NOT NULL)")
+
+        // ── 蓝图 2.5-2.7: summaries, keywords, project_dna ──
+        db.execSQL("CREATE TABLE summaries (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT UNIQUE NOT NULL, topic TEXT DEFAULT '', conclusions TEXT DEFAULT '', decisions TEXT DEFAULT '', next_steps TEXT DEFAULT '', created_at INTEGER NOT NULL)")
+        db.execSQL("CREATE TABLE keywords (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, keyword TEXT NOT NULL, weight REAL DEFAULT 1.0); CREATE INDEX idx_kw_keyword ON keywords(keyword)")
+        db.execSQL("CREATE TABLE project_dna (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT UNIQUE NOT NULL, goals TEXT DEFAULT '[]', successful_approaches TEXT DEFAULT '[]', failed_approaches TEXT DEFAULT '[]', failed_approaches_detail TEXT DEFAULT '[]', tools TEXT DEFAULT '[]', models TEXT DEFAULT '[]', next_plans TEXT DEFAULT '[]', updated_at INTEGER NOT NULL)")
+
+        // ── 蓝图 2.8: action_memories ──
+        db.execSQL("CREATE TABLE action_memories (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, action TEXT NOT NULL, permissions TEXT DEFAULT '', timing TEXT DEFAULT '', expiry TEXT DEFAULT '', source_authority TEXT DEFAULT 'medium')")
+
+        // ── 蓝图 2.9-2.10: topic_tree + keyword_index ──
+        db.execSQL("CREATE TABLE topic_tree (id INTEGER PRIMARY KEY AUTOINCREMENT, parent_id INTEGER REFERENCES topic_tree(id), name TEXT NOT NULL, node_type TEXT DEFAULT 'topic' CHECK(node_type IN ('topic','summary','session_ref','failed_detail')), summary TEXT DEFAULT '', detail TEXT DEFAULT '', session_refs TEXT DEFAULT '[]', keyword_refs TEXT DEFAULT '[]', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)")
+        db.execSQL("CREATE TABLE keyword_index (id INTEGER PRIMARY KEY AUTOINCREMENT, keyword TEXT NOT NULL, session_ids TEXT DEFAULT '[]', topic_node_ids TEXT DEFAULT '[]', weight REAL DEFAULT 1.0, updated_at INTEGER NOT NULL, UNIQUE(keyword)); CREATE INDEX idx_ki_keyword ON keyword_index(keyword)")
+
+        // ── 蓝图 2.11-2.12: tools + model_profiles ──
+        db.execSQL("CREATE TABLE tools (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, summary TEXT NOT NULL, tags TEXT DEFAULT '[]', full_description TEXT NOT NULL, embedding TEXT DEFAULT '', usage_categories TEXT DEFAULT '[]', usage_count INTEGER DEFAULT 0, success_count INTEGER DEFAULT 0, created_at INTEGER NOT NULL)")
+        db.execSQL("CREATE TABLE model_profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, provider TEXT NOT NULL, api_key_ref TEXT NOT NULL, capabilities TEXT DEFAULT '{}', cost_per_1k_input REAL DEFAULT 0, cost_per_1k_output REAL DEFAULT 0, max_tokens INTEGER DEFAULT 4096, tool_compatibility TEXT DEFAULT '{}', is_available INTEGER DEFAULT 1, created_at INTEGER NOT NULL)")
+
+        // ── 蓝图 2.13-2.15: shared_channel, task_queue, snapshots ──
+        db.execSQL("CREATE TABLE shared_channel (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id TEXT NOT NULL, task TEXT NOT NULL, status TEXT DEFAULT 'completed' CHECK(status IN ('completed','failed','in_progress')), findings TEXT DEFAULT '[]', problems TEXT DEFAULT '[]', solutions TEXT DEFAULT '[]', reusable TEXT DEFAULT '[]', conflicts TEXT DEFAULT '[]', created_at INTEGER NOT NULL)")
+        db.execSQL("CREATE TABLE task_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, task_type TEXT DEFAULT 'user_request', status TEXT DEFAULT 'queued' CHECK(status IN ('queued','running','paused','completed','failed')), priority INTEGER DEFAULT 0, payload TEXT DEFAULT '{}', checkpoint TEXT DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)")
+        db.execSQL("CREATE TABLE snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, tag TEXT NOT NULL, trigger_reason TEXT NOT NULL, db_backup_path TEXT, created_at INTEGER NOT NULL)")
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldV: Int, newV: Int) {}
+    override fun onUpgrade(db: SQLiteDatabase, oldV: Int, newV: Int) {
+        if (oldV < 2) {
+            // v1→v2: 添加蓝图全部表 + 扩展messages字段
+            try { db.execSQL("ALTER TABLE messages ADD COLUMN thinking TEXT DEFAULT ''") } catch (_: Exception) {}
+            try { db.execSQL("ALTER TABLE messages ADD COLUMN message_type TEXT DEFAULT 'message'") } catch (_: Exception) {}
+            try { db.execSQL("ALTER TABLE messages ADD COLUMN metadata TEXT DEFAULT '{}'") } catch (_: Exception) {}
+            try { db.execSQL("ALTER TABLE sessions ADD COLUMN status TEXT DEFAULT 'active'") } catch (_: Exception) {}
+            db.execSQL("CREATE TABLE IF NOT EXISTS summaries (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT UNIQUE NOT NULL, topic TEXT DEFAULT '', conclusions TEXT DEFAULT '', decisions TEXT DEFAULT '', next_steps TEXT DEFAULT '', created_at INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS keywords (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, keyword TEXT NOT NULL, weight REAL DEFAULT 1.0); CREATE INDEX IF NOT EXISTS idx_kw_keyword ON keywords(keyword)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS project_dna (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT UNIQUE NOT NULL, goals TEXT DEFAULT '[]', successful_approaches TEXT DEFAULT '[]', failed_approaches TEXT DEFAULT '[]', failed_approaches_detail TEXT DEFAULT '[]', tools TEXT DEFAULT '[]', models TEXT DEFAULT '[]', next_plans TEXT DEFAULT '[]', updated_at INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS action_memories (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, action TEXT NOT NULL, permissions TEXT DEFAULT '', timing TEXT DEFAULT '', expiry TEXT DEFAULT '', source_authority TEXT DEFAULT 'medium')")
+            db.execSQL("CREATE TABLE IF NOT EXISTS topic_tree (id INTEGER PRIMARY KEY AUTOINCREMENT, parent_id INTEGER, name TEXT NOT NULL, node_type TEXT DEFAULT 'topic', summary TEXT DEFAULT '', detail TEXT DEFAULT '', session_refs TEXT DEFAULT '[]', keyword_refs TEXT DEFAULT '[]', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS keyword_index (id INTEGER PRIMARY KEY AUTOINCREMENT, keyword TEXT NOT NULL, session_ids TEXT DEFAULT '[]', topic_node_ids TEXT DEFAULT '[]', weight REAL DEFAULT 1.0, updated_at INTEGER NOT NULL, UNIQUE(keyword)); CREATE INDEX IF NOT EXISTS idx_ki_keyword ON keyword_index(keyword)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS tools (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, summary TEXT NOT NULL, tags TEXT DEFAULT '[]', full_description TEXT NOT NULL, embedding TEXT DEFAULT '', usage_categories TEXT DEFAULT '[]', usage_count INTEGER DEFAULT 0, success_count INTEGER DEFAULT 0, created_at INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS model_profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, provider TEXT NOT NULL, api_key_ref TEXT NOT NULL, capabilities TEXT DEFAULT '{}', cost_per_1k_input REAL DEFAULT 0, cost_per_1k_output REAL DEFAULT 0, max_tokens INTEGER DEFAULT 4096, tool_compatibility TEXT DEFAULT '{}', is_available INTEGER DEFAULT 1, created_at INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS shared_channel (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id TEXT NOT NULL, task TEXT NOT NULL, status TEXT DEFAULT 'completed', findings TEXT DEFAULT '[]', problems TEXT DEFAULT '[]', solutions TEXT DEFAULT '[]', reusable TEXT DEFAULT '[]', conflicts TEXT DEFAULT '[]', created_at INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS task_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, task_type TEXT DEFAULT 'user_request', status TEXT DEFAULT 'queued', priority INTEGER DEFAULT 0, payload TEXT DEFAULT '{}', checkpoint TEXT DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, tag TEXT NOT NULL, trigger_reason TEXT NOT NULL, db_backup_path TEXT, created_at INTEGER NOT NULL)")
+        }
+    }
 
     // ── 消息操作 ──
 

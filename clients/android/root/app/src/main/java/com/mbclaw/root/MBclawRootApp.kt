@@ -4,7 +4,6 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
-import com.mbclaw.root.agent.AgentManager
 import com.mbclaw.root.sandbox.LocalSandbox
 import com.mbclaw.root.service.MBclawServerClient
 
@@ -21,8 +20,6 @@ import com.mbclaw.root.service.MBclawServerClient
 class MBclawRootApp : Application() {
 
     lateinit var serverClient: MBclawServerClient
-        private set
-    lateinit var agentManager: AgentManager
         private set
     lateinit var localSandbox: LocalSandbox
         private set
@@ -42,7 +39,6 @@ class MBclawRootApp : Application() {
 
         createNotificationChannels()
         serverClient = MBclawServerClient(serverUrl, serverApiKey)
-        agentManager = AgentManager(this)
         localSandbox = LocalSandbox(this)
     }
 

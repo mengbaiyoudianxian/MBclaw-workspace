@@ -20,12 +20,13 @@ import java.io.File
  */
 
 class ClassificationEngine(
+    private val context: Context,
     private val db: LocalDB,
     private val transcriptLogger: TranscriptLogger,
     private val layeredSearch: LayeredSearch,
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val treeFile: File
+    private val treeFile = File(context.filesDir, "hermes/class_tree.json")
 
     data class ClassificationNode(
         val id: String,
@@ -44,15 +45,7 @@ class ClassificationEngine(
     // 树状分类根节点
     private val rootNodes = mutableListOf<ClassificationNode>()
 
-    init {
-        treeFile = File(db.let {
-            // Use DB path to derive tree file location
-            File(File(File(".").absolutePath), "hermes/class_tree.json")
-        }.absolutePath.replace("hermes/class_tree.json", "").let {
-            File(File(it).parentFile, "hermes/class_tree.json")
-        })
-        loadTree()
-    }
+    init { loadTree() }
 
     // ── 树状分类 ──
 

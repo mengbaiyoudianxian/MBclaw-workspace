@@ -5,6 +5,8 @@ import com.mbclaw.root.data.LocalDB
 import kotlinx.coroutines.*
 import kotlin.math.ln
 import kotlin.math.sqrt
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * 项目六：分层记忆搜索 L1 → L2 → L3
@@ -202,7 +204,7 @@ class LayeredSearch(
                 .url(url)
                 .addHeader("Authorization", "Bearer $apiKey")
                 .addHeader("Content-Type", "application/json")
-                .post(okhttp3.RequestBody.create(json.toString(), "application/json".toMediaType()))
+                .post(json.toString().toRequestBody("application/json".toMediaType()))
                 .build()
 
             val response = client.newCall(request).execute()
