@@ -99,20 +99,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
         viewModelScope.launch {
             try {
-                // ── Hermes P6: 实时记忆预调用 (L1→L2→L3) ──
-                val memoryInjection = hermes.bootstrapSession(sessionId, text)
-                val memories = hermes.layeredSearch.search(
-                    com.mbclaw.nonroot.hermes.LayeredSearch.SearchContext(
-                        query = text, maxResults = 5,
-                        enableL3 = settings.utopiaEnabled,
-                        embeddingApiBaseUrl = settings.apiBaseUrl,
-                        embeddingApiKey = settings.apiKey,
-                    )
-                )
-
-                // AgentLoop 内置 MBclawEnforcer 代码级约束
-                // PRE: 强制注入记忆+工具+身份
-                // POST: 验证+修正响应
+                // AgentLoop 内置蓝图4.2+7.3分层搜索 + MBclawEnforcer代码约束
                 val reply = agentLoop.run(text, sessionId, maxTurns = 5)
 
                 db.saveMessage(sessionId, "assistant", reply, null)

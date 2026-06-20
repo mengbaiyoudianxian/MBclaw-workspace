@@ -28,18 +28,25 @@ class MBclawEnforcer(
         val correctedResponse: String? = null,  // 如果修正了，返回修正版本
     )
 
-    // ── PRE: 构建强制注入上下文 ──
+    // ── PRE: 构建强制注入上下文 (蓝图 4.2 + 7.3) ──
 
     suspend fun buildContext(userMessage: String, sessionId: String): EnforcedContext {
-        // 强制记忆搜索 (代码执行，不等LLM请求)
-        val memories = layeredSearch.search(LayeredSearch.SearchContext(
+        // 蓝图 7.3: L1 关键词反向索引 → L2 TF-IDF → L3 向量(可选)
+        val results = layeredSearch.search(LayeredSearch.SearchContext(
             query = userMessage, maxResults = 5
         ))
-        val memoryInjection = if (memories.isNotEmpty()) {
-            "[强制注入 — 必须在回复中引用以下记忆]\n" +
-            memories.joinToString("\n") { "• ${it.key}: ${it.value.take(200)}" } +
-            "\n[/强制注入]"
-        } else ""
+
+        // 蓝图 7.3: Token 预算控制 — 注入总量 < max_context * 0.3
+        val formatted = buildString {
+            val injected = layeredSearch.formatForInjection(results)
+            if (injected.isNotBlank()) {
+                append("[强制注入 — 蓝图4.2 分层搜索结果，必须在回复中引用]\n")
+                append(injected)
+                append("\n[/强制注入]")
+            }
+        }
+
+        val memoryInjection = if (formatted.length > 600) formatted.take(600) + "..." else formatted.toString()
 
         // 强制能力声明 (代码生成，不是prompt)
         val capabilityInjection = buildString {
