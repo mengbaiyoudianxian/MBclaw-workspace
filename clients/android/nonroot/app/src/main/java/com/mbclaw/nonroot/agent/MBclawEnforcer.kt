@@ -36,17 +36,8 @@ class MBclawEnforcer(
             query = userMessage, maxResults = 5
         ))
 
-        // 蓝图 7.3: Token 预算控制 — 注入总量 < max_context * 0.3
-        val formatted = buildString {
-            val injected = layeredSearch.formatForInjection(results)
-            if (injected.isNotBlank()) {
-                append("[强制注入 — 蓝图4.2 分层搜索结果，必须在回复中引用]\n")
-                append(injected)
-                append("\n[/强制注入]")
-            }
-        }
-
-        val memoryInjection = if (formatted.length > 600) formatted.take(600) + "..." else formatted.toString()
+        // 蓝图 7.3: 注入索引指针，不注入原话
+        val memoryInjection = layeredSearch.formatForInjection(results)
 
         // 强制能力声明 (代码生成，不是prompt)
         val capabilityInjection = buildString {
@@ -116,10 +107,9 @@ class MBclawEnforcer(
     }
 
     private fun hasMemoryReference(response: String): Boolean {
-        // 检测响应中是否有记忆引用标记
-        return response.contains("记忆", ignoreCase = true) ||
-               response.contains("之前", ignoreCase = true) ||
-               response.contains("你说过", ignoreCase = true) ||
-               response.contains("提到过", ignoreCase = true)
+        // 检测是否引用了记忆索引 [MEM#N] 或调用了 search_memory 工具
+        return response.contains("MEM#") ||
+               response.contains("search_memory") ||
+               response.contains("记忆索引")
     }
 }

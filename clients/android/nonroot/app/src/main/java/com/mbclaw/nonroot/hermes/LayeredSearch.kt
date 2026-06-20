@@ -140,15 +140,18 @@ class LayeredSearch(
         }
     }
 
-    /** 将搜索结果格式化为可注入上下文的文本 */
+    /** 将搜索结果格式化为索引引用 — 不注入原话，只给指针 */
     fun formatForInjection(results: List<SearchResult>): String {
         if (results.isEmpty()) return ""
         return buildString {
-            appendLine("[MBclaw 记忆系统 — 相关记忆]")
-            results.forEach { r ->
-                appendLine("  • ${r.key}: ${r.value.take(150)}")
+            appendLine("[记忆索引 — 需要在回复中引用时调 search_memory 获取原文]")
+            results.forEachIndexed { i, r ->
+                val key = r.key.take(30)
+                val layer = r.layer.take(8)
+                val score = "%.0f".format(r.score * 100)
+                appendLine("  [MEM#${i+1}] $key (${layer}, ${score}%)")
             }
-            appendLine("[请自然引用以上记忆，不要逐条重复]")
+            appendLine("[/记忆索引]")
         }
     }
 
