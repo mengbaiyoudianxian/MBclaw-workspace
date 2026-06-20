@@ -41,6 +41,13 @@
     <uses-permission android:name="com.xiaomi.voiceassist.permission.VOICE_TRIGGER" />
     <uses-permission android:name="com.xiaomi.aiasst.service.permission.AI_SERVICE" />
 
+    <!-- 前台服务保活 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
     <application
         android:name=".MBclawRootApp"
         android:allowBackup="true"
@@ -84,6 +91,16 @@
             </intent-filter>
         </service>
 
+        <!-- 语音 Session 服务 -->
+        <service
+            android:name=".voice.MBclawVoiceSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionSessionService" />
+            </intent-filter>
+        </service>
+
         <!-- 后台 Agent 服务 -->
         <service
             android:name=".agent.AgentService"
@@ -119,6 +136,33 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+
+        <!-- 开机自启 -->
+        <receiver
+            android:name=".service.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 语音结果广播 -->
+        <receiver
+            android:name=".voice.VoiceResultReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.mbclaw.VOICE_RESULT" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 主动建议广播 -->
+        <receiver
+            android:name=".service.ProactiveReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.mbclaw.PROACTIVE_SUGGESTION" />
+            </intent-filter>
+        </receiver>
 
         <!-- 文件共享 Provider -->
         <provider
