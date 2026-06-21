@@ -97,7 +97,7 @@ class AgentLoop(
         }
 
         // P1: 记录thinking到messages
-        db.writableDatabase.execSQL("UPDATE messages SET thinking=?, message_type='thinking' WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1", arrayOf("agent_loop_${turns}turns", sessionId))
+        db.writableDatabase.execSQL("UPDATE messages SET thinking=?, message_type='thinking' WHERE id=(SELECT id FROM messages WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1)", arrayOf("agent_loop_${turns}turns", sessionId))
 
         return@withContext lastResponse
     }

@@ -36,7 +36,15 @@ fun ChatScreen(agent: MBclawAgent) {
 
     LaunchedEffect(Unit) {
         agent.initSession()
-        sessionId = agent.db.createSession("新对话")
+        val prevSid = agent.db.getLastSessionId()
+        if (prevSid != null) {
+            sessionId = prevSid
+            agent.db.getMessages(prevSid).forEach { m ->
+                messages.add(ChatMsg(m.role, m.content))
+            }
+        } else {
+            sessionId = agent.db.createSession("新对话")
+        }
         if (messages.isEmpty()) {
             messages.add(ChatMsg("assistant",
                 "🌟 MBclaw Root v2.0\n由18岁的打工人孟白耗时2个月独立打造。\n" +
@@ -83,12 +91,20 @@ fun ChatScreen(agent: MBclawAgent) {
 @Composable
 private fun ChatBubble(msg: ChatMsg) {
     val isUser = msg.role == "user"
+    val context = androidx.compose.ui.platform.LocalContext.current
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (isUser) Alignment.End else Alignment.Start) {
         Surface(modifier = Modifier.widthIn(max = 340.dp), color = when { isUser -> MaterialTheme.colorScheme.primary; msg.isError -> MaterialTheme.colorScheme.errorContainer; else -> MaterialTheme.colorScheme.surfaceVariant }, shape = RoundedCornerShape(16.dp, 16.dp, if (isUser) 4.dp else 16.dp, if (isUser) 16.dp else 4.dp)) {
             Column(Modifier.padding(12.dp)) {
                 Text(if (isUser) "🧑 你" else "🤖 MBclaw Root", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(4.dp))
                 Text(msg.content, style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(2.dp))
+                TextButton(onClick = {
+                    val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("MBclaw", msg.content))
+                }, contentPadding = PaddingValues(4.dp)) {
+                    Text("📋 复制", style = MaterialTheme.typography.labelSmall)
+                }
             }
         }
     }

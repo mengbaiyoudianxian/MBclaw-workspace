@@ -229,6 +229,23 @@ class LocalDB(context: Context) : SQLiteOpenHelper(
         return id
     }
 
+    fun getLastSessionId(): String? {
+        val c = readableDatabase.rawQuery("SELECT id FROM sessions ORDER BY updated_at DESC LIMIT 1", null)
+        val sid = if (c.moveToFirst()) c.getString(0) else null
+        c.close()
+        return sid
+    }
+
+    fun getMessages(sessionId: String): List<ChatMsg> {
+        val c = readableDatabase.rawQuery("SELECT role, content FROM messages WHERE session_id=? ORDER BY id ASC", arrayOf(sessionId))
+        val msgs = mutableListOf<ChatMsg>()
+        while (c.moveToNext()) msgs.add(ChatMsg(c.getString(0), c.getString(1)))
+        c.close()
+        return msgs
+    }
+
+    data class ChatMsg(val role: String, val content: String)
+
     fun updateSessionTitle(id: String, title: String) {
         val cv = ContentValues().apply {
             put("title", title)

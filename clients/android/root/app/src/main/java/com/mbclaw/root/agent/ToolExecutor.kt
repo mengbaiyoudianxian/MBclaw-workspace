@@ -32,6 +32,14 @@ class ToolExecutor(
     private val realEngine: RealEngine,
 ) {
     private val shizuku = ShizukuManager(context)
+    // Root 检测: 系统API > Root > Shizuku > 无障碍
+    private val hasRoot: Boolean by lazy {
+        try { Runtime.getRuntime().exec(arrayOf("su","-c","id")).waitFor() == 0 } catch (_:Exception) { false }
+    }
+    private fun execRoot(cmd: String): String? = try {
+        val p = Runtime.getRuntime().exec(arrayOf("su","-c",cmd)); p.waitFor()
+        p.inputStream.bufferedReader().readText().trim()
+    } catch (_:Exception) { null }
     private val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     private val bluetoothAdapter = android.bluetooth.BluetoothAdapter.getDefaultAdapter()
@@ -173,26 +181,32 @@ class ToolExecutor(
 
                 // ═══ 屏幕 — 无障碍优先 (系统级) ═══
                 "take_screenshot" -> {
-                    val svc = MBclawAccessibilityService.instance
-                    if (shizuku.isReady()) {
+                    if (hasRoot) {
+                        execRoot("screencap -p /sdcard/mbclaw_screenshot_${System.currentTimeMillis()}.png")
+                        "截图已保存 (Root)"
+                    } else if (shizuku.isReady()) {
                         shizuku.screenshot("/sdcard/mbclaw_screenshot_${System.currentTimeMillis()}.png")
                         "截图已保存 (Shizuku)"
                     } else {
-                        "截图需要Shizuku"
+                        "截图需要Root或Shizuku"
                     }
                 }
                 "screen_record" -> {
-                    if (shizuku.isReady()) {
+                    if (hasRoot) {
+                        execRoot("screenrecord --time-limit ${args.optInt("duration", 10)} /sdcard/mbclaw_record_${System.currentTimeMillis()}.mp4")
+                        "录屏中... (Root)"
+                    } else if (shizuku.isReady()) {
                         shizuku.screenRecord("/sdcard/mbclaw_record_${System.currentTimeMillis()}.mp4", args.optInt("duration", 10))
-                        "录屏中..."
-                    } else "录屏需要Shizuku"
+                        "录屏中... (Shizuku)"
+                    } else "录屏需要Root或Shizuku"
                 }
                 "click_at" -> {
                     val svc = MBclawAccessibilityService.instance
                     if (svc?.clickAt(args.optInt("x").toFloat(), args.optInt("y").toFloat()) == true)
                         "点击 (无障碍API)"
+                    else if (hasRoot) { execRoot("input tap ${args.optInt("x")} ${args.optInt("y")}"); "点击 (Root)" }
                     else if (shizuku.isReady()) { shizuku.inputTap(args.optInt("x"), args.optInt("y")); "点击 (Shizuku)" }
-                    else "点击需要先开启无障碍服务"
+                    else "点击需要Root/Shizuku/无障碍"
                 }
                 "long_press_at" -> {
                     val svc = MBclawAccessibilityService.instance
@@ -202,8 +216,9 @@ class ToolExecutor(
                 "swipe" -> {
                     val svc = MBclawAccessibilityService.instance
                     if (svc?.swipe(args.optInt("x1").toFloat(), args.optInt("y1").toFloat(), args.optInt("x2").toFloat(), args.optInt("y2").toFloat(), args.optLong("duration_ms", 300)) == true) "滑动完成"
+                    else if (hasRoot) { execRoot("input swipe ${args.optInt("x1")} ${args.optInt("y1")} ${args.optInt("x2")} ${args.optInt("y2")}"); "滑动 (Root)" }
                     else if (shizuku.isReady()) { shizuku.inputSwipe(args.optInt("x1"), args.optInt("y1"), args.optInt("x2"), args.optInt("y2")); "滑动 (Shizuku)" }
-                    else "滑动需要无障碍或Shizuku"
+                    else "滑动需要Root/Shizuku/无障碍"
                 }
                 "input_text" -> {
                     val svc = MBclawAccessibilityService.instance
