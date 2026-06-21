@@ -185,9 +185,22 @@ fun AccountSheet(ctx: android.content.Context, onDismiss: () -> Unit) {
 // ──────────────────────────────────────────────────────
 @Composable
 fun PermissionsDetailDialog(ctx: android.content.Context, onDismiss: () -> Unit) {
-    val all = RootBootstrap.DANGEROUS
+    val all = remember {
+        // 必备权限置顶
+        RootBootstrap.DANGEROUS.sortedByDescending {
+            com.mbclaw.root.agent.PermissionLabels.get(it).essential
+        }
+    }
     var refresh by remember { mutableStateOf(0) }
     var picking by remember { mutableStateOf<String?>(null) }
+
+    fun jumpToAppSettings() {
+        val i = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = android.net.Uri.parse("package:${ctx.packageName}")
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        ctx.startActivity(i)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -196,6 +209,7 @@ fun PermissionsDetailDialog(ctx: android.content.Context, onDismiss: () -> Unit)
             LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
                 items(all) { perm ->
                     key(refresh, perm) {
+                        val info = com.mbclaw.root.agent.PermissionLabels.get(perm)
                         val policy = PermissionPolicy.get(ctx, perm)
                         val granted = ctx.checkSelfPermission(perm) == android.content.pm.PackageManager.PERMISSION_GRANTED
                         Row(
@@ -210,12 +224,23 @@ fun PermissionsDetailDialog(ctx: android.content.Context, onDismiss: () -> Unit)
                                 }) {}
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
-                                Text(perm.substringAfterLast('.'),
-                                     style = MaterialTheme.typography.bodyMedium)
-                                Text(perm,
-                                     style = MaterialTheme.typography.labelSmall,
-                                     color = MaterialTheme.colorScheme.outline,
-                                     maxLines = 1)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(info.zh, style = MaterialTheme.typography.bodyMedium,
+                                         fontWeight = if (info.essential) FontWeight.SemiBold else FontWeight.Normal)
+                                    if (info.essential) {
+                                        Spacer(Modifier.width(6.dp))
+                                        Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
+                                                color = MaterialTheme.colorScheme.primaryContainer) {
+                                            Text("必备", modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary)
+                                        }
+                                    }
+                                }
+                                if (info.desc.isNotEmpty()) {
+                                    Text(info.desc, style = MaterialTheme.typography.labelSmall,
+                                         color = MaterialTheme.colorScheme.outline, maxLines = 1)
+                                }
                             }
                             Text(when (policy) {
                                 PermissionPolicy.Policy.ALLOW -> if (granted) "✅" else "△"
@@ -229,24 +254,38 @@ fun PermissionsDetailDialog(ctx: android.content.Context, onDismiss: () -> Unit)
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                RootBootstrap.resetAndRerun(ctx)
-                refresh++
-            }) { Text("重新授予") }
+            Row {
+                TextButton(onClick = { jumpToAppSettings() }) { Text("系统设置") }
+                Spacer(Modifier.width(4.dp))
+                TextButton(onClick = {
+                    RootBootstrap.resetAndRerun(ctx)
+                    refresh++
+                }) { Text("重新授予") }
+            }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
     )
 
     picking?.let { perm ->
+        val info = com.mbclaw.root.agent.PermissionLabels.get(perm)
         AlertDialog(
             onDismissRequest = { picking = null },
-            title = { Text(perm.substringAfterLast('.')) },
-            text = { Text("选择此权限的处理方式：") },
+            title = { Text(info.zh + if (info.essential) " (必备)" else "") },
+            text = {
+                Column {
+                    Text(info.desc.ifEmpty { perm.substringAfterLast('.') },
+                         style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text("选择处理方式：",
+                         style = MaterialTheme.typography.labelMedium,
+                         color = MaterialTheme.colorScheme.outline)
+                }
+            },
             confirmButton = {
                 Column {
                     listOf(
                         Triple("以后全部禁止", PermissionPolicy.Policy.DENY_FOREVER, MaterialTheme.colorScheme.error),
-                        Triple("打开", PermissionPolicy.Policy.ALLOW, MaterialTheme.colorScheme.primary),
+                        Triple("打开 (推荐)", PermissionPolicy.Policy.ALLOW, MaterialTheme.colorScheme.primary),
                         Triple("每次启动默认打开", PermissionPolicy.Policy.ASK_EACH_TIME, MaterialTheme.colorScheme.tertiary),
                     ).forEach { (label, pol, col) ->
                         TextButton(
@@ -259,6 +298,18 @@ fun PermissionsDetailDialog(ctx: android.content.Context, onDismiss: () -> Unit)
                             colors = ButtonDefaults.textButtonColors(contentColor = col),
                         ) { Text(label) }
                     }
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    TextButton(
+                        onClick = {
+                            val i = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                data = android.net.Uri.parse("package:${ctx.packageName}")
+                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            ctx.startActivity(i)
+                            picking = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("🔧 跳转系统设置手动授权") }
                 }
             }
         )

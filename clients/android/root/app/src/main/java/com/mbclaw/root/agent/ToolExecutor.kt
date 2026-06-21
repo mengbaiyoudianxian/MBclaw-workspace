@@ -98,36 +98,51 @@ class ToolExecutor(
                     } else "需要 Android 6.0+"
                 }
                 "toggle_airplane_mode" -> {
-                    // 系统广播 — 无需Shizuku (但可能需要系统权限)
+                    // 优先级: Root > Shizuku > 系统广播(Android 9-) > 无障碍跳转
                     val enable = args.optBoolean("enable")
-                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                        // Android 9以下: 可以通过广播
-                        val intent = Intent(Intent.ACTION_AIRPLANE_MODE_CHANGED).apply {
-                            putExtra("state", enable)
+                    val v = if (enable) 1 else 0
+                    when {
+                        // ★ Root 首选 (修复: 之前漏了)
+                        tier.hasRoot -> {
+                            execRoot("settings put global airplane_mode_on $v && am broadcast -a android.intent.action.AIRPLANE_MODE --ez state ${enable}")
+                            "✈️ 飞行模式 已${if (enable) "打开" else "关闭"} (Root)"
                         }
-                        context.sendBroadcast(intent)
-                        "飞行模式广播已发送"
-                    } else {
-                        // Android 10+: 系统限制，尝试Settings面板或不求Shizuku
-                        if (shizuku.isReady()) {
-                            shizuku.exec("settings put global airplane_mode_on ${if (enable) 1 else 0}")
+                        tier.hasAdb -> {
+                            shizuku.exec("settings put global airplane_mode_on $v")
                             shizuku.exec("am broadcast -a android.intent.action.AIRPLANE_MODE")
-                            "飞行模式 已${if (enable) "打开" else "关闭"} (Shizuku)"
-                        } else {
-                            "Android 10+ 飞行模式需Shizuku。请说「打开Shizuku」或手动操作。"
+                            "✈️ 飞行模式 已${if (enable) "打开" else "关闭"} (Shizuku)"
+                        }
+                        Build.VERSION.SDK_INT < Build.VERSION_CODES.Q -> {
+                            val intent = Intent(Intent.ACTION_AIRPLANE_MODE_CHANGED).apply { putExtra("state", enable) }
+                            context.sendBroadcast(intent)
+                            "✈️ 飞行模式广播已发送 (Android 9-)"
+                        }
+                        else -> {
+                            // 跳到系统设置页让用户手动开
+                            systemAmStart(Settings.ACTION_AIRPLANE_MODE_SETTINGS)
+                            "无 Root/Shizuku, 已打开系统飞行模式设置"
                         }
                     }
                 }
                 "set_brightness" -> {
                     val level = args.optInt("level", 128)
-                    // 需要 WRITE_SETTINGS 权限(用户可在设置中授予)
-                    if (Settings.System.canWrite(context)) {
-                        Settings.System.putInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, level)
-                        "亮度已设为 $level/255"
-                    } else {
-                        // 引导用户授权
-                        systemAmStart(Settings.ACTION_MANAGE_WRITE_SETTINGS)
-                        "需要「修改系统设置」权限，请在弹出的设置中允许MBclaw"
+                    when {
+                        tier.hasRoot -> {
+                            execRoot("settings put system screen_brightness $level")
+                            "💡 亮度已设为 $level/255 (Root)"
+                        }
+                        Settings.System.canWrite(context) -> {
+                            Settings.System.putInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, level)
+                            "💡 亮度已设为 $level/255"
+                        }
+                        tier.hasAdb -> {
+                            shizuku.exec("settings put system screen_brightness $level")
+                            "💡 亮度已设为 $level/255 (Shizuku)"
+                        }
+                        else -> {
+                            systemAmStart(Settings.ACTION_MANAGE_WRITE_SETTINGS)
+                            "需要 WRITE_SETTINGS 权限, 已打开授权页面"
+                        }
                     }
                 }
                 "set_volume" -> {

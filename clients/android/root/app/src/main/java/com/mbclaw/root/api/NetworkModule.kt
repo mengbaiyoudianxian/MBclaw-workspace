@@ -11,7 +11,8 @@ import java.util.concurrent.TimeUnit
  */
 object NetworkModule {
 
-    private var baseUrl: String = "http://47.83.2.188:8000"
+    // 默认值仅在 setBaseUrl 调用前临时占位 — 真实地址由调用方传入(从 Endpoints 拉)
+    private var baseUrl: String = ""
     private var retrofit: Retrofit? = null
     private var apiService: MBclawApiService? = null
 

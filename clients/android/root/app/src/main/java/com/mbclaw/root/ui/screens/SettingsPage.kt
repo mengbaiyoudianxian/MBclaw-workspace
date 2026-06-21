@@ -156,6 +156,32 @@ fun SettingsPage(
                 )
             }
 
+            // ─── 外观 ───
+            SectionTitle("外观")
+            SettingGroup {
+                val currentMode = com.mbclaw.root.ui.theme.ThemePreference.mode(ctx)
+                Column(Modifier.padding(16.dp)) {
+                    Text("主题模式", fontWeight = FontWeight.SemiBold,
+                         style = MaterialTheme.typography.bodyLarge)
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(
+                            "light" to "☀️ 浅色",
+                            "dark" to "🌙 深色",
+                            "system" to "📱 跟随系统",
+                        ).forEach { (mode, label) ->
+                            FilterChip(
+                                selected = currentMode == mode,
+                                onClick = { com.mbclaw.root.ui.theme.ThemePreference.setMode(ctx, mode) },
+                                label = { Text(label, style = MaterialTheme.typography.labelMedium) },
+                                shape = RoundedCornerShape(50),
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
+            }
+
             SectionTitle("模型与工具")
             SettingGroup {
                 SettingItemRow(

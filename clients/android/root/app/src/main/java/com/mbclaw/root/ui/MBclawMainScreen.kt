@@ -397,13 +397,8 @@ private fun AboutDialog(ctx: android.content.Context, onDismiss: () -> Unit) {
                 Spacer(Modifier.height(20.dp))
                 HorizontalDivider()
                 Spacer(Modifier.height(8.dp))
-                // 任务 10: MBclaw 行 → 下载页
-                AboutRow("MBclaw", "v${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})  →  下载页") {
-                    val i = android.content.Intent(android.content.Intent.ACTION_VIEW,
-                        android.net.Uri.parse("http://121.199.57.195/"))
-                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    ctx.startActivity(i)
-                }
+                // MBclaw 行 → 检测更新 (任务 3)
+                MBclawVersionRow(ctx)
                 // 任务 10: 显示 QQ 号
                 AboutRow("作者 QQ", "1973054239 (点击复制)") {
                     val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -418,8 +413,8 @@ private fun AboutDialog(ctx: android.content.Context, onDismiss: () -> Unit) {
                         .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                     ctx.startActivity(i)
                 }
-                // 任务 10: 友情赞助
-                AboutRow("💖 友情赞助", "请作者喝杯咖啡") { showQrSheet = true }
+                // 友情赞助
+                AboutRow("💖 友情赞助", "请作者喝杯奶茶") { showQrSheet = true }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
@@ -556,5 +551,71 @@ private fun AllSessionsSheet(
                 }
             }
         }
+    }
+}
+
+/** MBclaw 版本行 — 显示当前 + 最新, 点击检测/下载 */
+@Composable
+private fun MBclawVersionRow(ctx: android.content.Context) {
+    var latest by remember { mutableStateOf("检测中...") }
+    var hasUpdate by remember { mutableStateOf(false) }
+    var downloadUrl by remember { mutableStateOf("") }
+    val current = BuildConfig.VERSION_NAME
+
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val backend = com.mbclaw.root.data.Endpoints.backend(ctx)
+                val u = java.net.URL("${backend.trimEnd('/')}/admin/client/version?current=$current")
+                val conn = u.openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 5000
+                val txt = conn.inputStream.bufferedReader().readText()
+                val j = org.json.JSONObject(txt)
+                val ver = j.optString("latest", current)
+                val hasNew = j.optBoolean("has_update", false)
+                val du = j.optString("download_url", "")
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    latest = ver; hasUpdate = hasNew; downloadUrl = du
+                }
+            } catch (_: Exception) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    latest = "无法连接服务器"
+                }
+            }
+        }
+    }
+
+    Row(
+        Modifier.fillMaxWidth().clickable {
+            // 点击 = 跳下载页
+            val url = if (downloadUrl.startsWith("http")) downloadUrl
+                      else com.mbclaw.root.data.Endpoints.download(ctx)
+            val i = android.content.Intent(android.content.Intent.ACTION_VIEW,
+                android.net.Uri.parse(url))
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(i)
+        }.padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("MBclaw", style = MaterialTheme.typography.bodyMedium,
+                     fontWeight = FontWeight.SemiBold)
+                if (hasUpdate) {
+                    Spacer(Modifier.width(6.dp))
+                    Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
+                            color = MaterialTheme.colorScheme.errorContainer) {
+                        Text("有更新",
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+            Text("当前 v$current → 最新 $latest", style = MaterialTheme.typography.labelSmall,
+                 color = if (hasUpdate) MaterialTheme.colorScheme.error
+                         else MaterialTheme.colorScheme.outline)
+        }
+        Icon(Icons.Filled.ChevronRight, null, tint = MaterialTheme.colorScheme.outline)
     }
 }

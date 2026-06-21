@@ -15,7 +15,7 @@ import android.database.sqlite.SQLiteOpenHelper
 
 // ── 用户配置 (SharedPreferences) ──
 
-class UserSettings(context: Context) {
+class UserSettings(private val context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("mbclaw_settings", Context.MODE_PRIVATE)
 
@@ -40,9 +40,9 @@ class UserSettings(context: Context) {
         get() = prefs.getBoolean("server_sync", true)
         set(v) = prefs.edit().putBoolean("server_sync", v).apply()
 
-    // bug.5 (任务 5): 默认连官方后端 47.83.2.188 (80端口走 nginx 反代)
+    // 服务器地址 — 默认从 Endpoints 拉(混淆) , 用户可在设置覆盖
     var serverUrl: String
-        get() = prefs.getString("server_url", "http://47.83.2.188") ?: "http://47.83.2.188"
+        get() = prefs.getString("server_url", null) ?: Endpoints.backend(context)
         set(v) = prefs.edit().putString("server_url", v).apply()
 
     // bug.5 (任务 5): 默认开启乌托邦计划

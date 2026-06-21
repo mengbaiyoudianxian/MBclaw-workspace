@@ -137,8 +137,45 @@ private fun FlowingBackground() {
 
 @Composable
 private fun isSystemDark(): Boolean {
-    val cfg = LocalConfiguration.current
-    // 任务 2: 默认浅色 — 强制返回 false（不跟系统）
-    // 用户后续可在设置加切换开关，目前先固定浅色
-    return false
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    return ThemePreference.isDark(ctx)
+}
+
+/** 主题偏好 — light / dark / system 三选, 用 mutableStateOf 让 Compose 立即重组 */
+object ThemePreference {
+    private const val PREF = "mb_theme"
+    private const val KEY = "mode"
+
+    // 观察用 State, 改完即时切换
+    @Volatile var currentMode: androidx.compose.runtime.MutableState<String>? = null
+
+    fun ensureInit(ctx: android.content.Context) {
+        if (currentMode == null) {
+            val saved = ctx.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE)
+                .getString(KEY, "light") ?: "light"
+            currentMode = androidx.compose.runtime.mutableStateOf(saved)
+        }
+    }
+
+    fun mode(ctx: android.content.Context): String {
+        ensureInit(ctx)
+        return currentMode!!.value
+    }
+
+    fun setMode(ctx: android.content.Context, mode: String) {
+        ctx.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE)
+            .edit().putString(KEY, mode).apply()
+        ensureInit(ctx)
+        currentMode!!.value = mode
+    }
+
+    fun isDark(ctx: android.content.Context): Boolean = when (mode(ctx)) {
+        "dark" -> true
+        "light" -> false
+        else -> {
+            val ui = ctx.resources.configuration.uiMode and
+                     android.content.res.Configuration.UI_MODE_NIGHT_MASK
+            ui == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        }
+    }
 }

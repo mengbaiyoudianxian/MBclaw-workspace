@@ -77,9 +77,25 @@ class AgentLoop(
         val ctx = enforcer.buildContext(userMessage, sessionId)
         val hadMemories = ctx.memoryInjection.isNotBlank()
 
+        // ★ 实时权限状态注入 (修复: agent 不知道自己有 root)
+        val tier = PermissionTier.get(context)
+        val rootStatus = buildString {
+            append("[设备权限状态 - 每次都看这个再决策]\n")
+            append("• ROOT: ${if (tier.hasRoot) "✅ 已授权 (UID 0, 全部 capabilities)" else "❌ 未授权"}\n")
+            append("• ADB(Shizuku): ${if (tier.hasAdb) "✅ 已就绪" else "❌ 未就绪"}\n")
+            append("• 无障碍服务: ${if (tier.hasAccessibility) "✅ 已绑定" else "❌ 未绑定"}\n")
+            append("最高可用层: ${tier.bestTier().name}\n")
+            if (tier.hasRoot) {
+                append("\n★ 你有 ROOT! 所有需要系统权限的操作 (飞行模式/亮度/卸载等), 工具会自动用 root 完成, 不要拒绝, 直接调。\n")
+            }
+            append("[/状态]\n")
+        }
+
         val messages = mutableListOf<AgentMsg>()
-        // 身份约束 (极简)
+        // 身份约束 (含 root 提醒)
         messages.add(AgentMsg("system", ctx.identityConstraint))
+        // 实时权限状态
+        messages.add(AgentMsg("system", rootStatus))
         // 强制能力声明
         messages.add(AgentMsg("system", ctx.capabilityInjection))
         // 强制记忆注入

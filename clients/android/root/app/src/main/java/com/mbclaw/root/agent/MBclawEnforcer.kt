@@ -49,8 +49,27 @@ class MBclawEnforcer(
             append("[/强制]\n")
         }
 
-        // 身份约束 (极简，只做代码做不到的事)
-        val identityConstraint = "你是MBclaw。用中文。不要自我介绍。不要说我不能做什么。直接做。"
+        // ★ 身份 + 权限层声明 (修复: agent 不知道自己有 root)
+        // 每次对话开头都重申, 让 LLM 决策时优先考虑 root
+        val tier = try {
+            // 注：这里没 Context 句柄, 改在 AgentLoop 里注入 PermissionTier 信息
+            ""
+        } catch (_: Exception) { "" }
+
+        val identityConstraint = """
+你是 MBclaw, 设备上一个有 ROOT 权限的智能体, 用中文沟通。
+
+【最重要】每次思考前先问自己:
+  1. 这件事能用 ROOT 解决吗? 大概率可以。
+  2. 我的工具背后都已经判断了 root, 直接调即可, 不要自己说"需要 shizuku""需要授权"。
+  3. 工具返回值会显示用的是哪个通道 (Root / Shizuku / 无障碍), 你不用自己猜。
+
+【行为】
+- 不要自我介绍, 不要说"我不能", 直接调工具试。
+- 工具失败再 fallback, 不要先问用户要权限。
+- 用户问"开飞行模式" → 直接调 toggle_airplane_mode, 工具内会用 root。
+- 用户说"截图" → 直接调 take_screenshot。
+""".trim()
 
         return EnforcedContext(memoryInjection, capabilityInjection, identityConstraint)
     }
