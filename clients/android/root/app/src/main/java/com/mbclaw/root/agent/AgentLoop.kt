@@ -69,16 +69,17 @@ class AgentLoop(
 
         while (turns < maxTurns) {
             turns++
+            // 最后一轮: 强制 LLM 给最终答案，不再执行工具
+            if (turns >= maxTurns) {
+                messages.add(AgentMsg("system", "已达最大轮次。请直接给出最终回答，不要再调用工具。"))
+            }
             val result = callWithTools(messages)
-            if (result.toolCall != null) {
-                // LLM 决定调工具
+            if (result.toolCall != null && turns < maxTurns) {
                 val toolResult = toolExecutor.execute(result.toolCall.name, result.toolCall.arguments)
                 messages.add(AgentMsg("assistant", null, listOf(result.toolCall)))
                 messages.add(AgentMsg("tool", toolResult, toolCallId = result.toolCall.id))
-                // 继续循环让LLM看工具结果
                 continue
             } else {
-                // LLM 直接回复用户
                 lastResponse = result.content ?: "完成"
                 messages.add(AgentMsg("assistant", lastResponse))
                 // 保存到数据库

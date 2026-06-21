@@ -79,18 +79,14 @@ class ToolExecutor(
                 // ═══ 设备控制 — 系统SDK直调 ═══
                 "toggle_wifi" -> {
                     val enable = args.optBoolean("enable")
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        // Android 10+: 系统设置面板 (无需任何权限)
-                        systemAmStart(Settings.Panel.ACTION_WIFI)
-                        "WiFi 面板已打开，请手动${if (enable) "打开" else "关闭"}"
-                    } else {
-                        wifiManager?.isWifiEnabled = enable
-                        "WiFi 已${if (enable) "打开" else "关闭"}"
-                    }
+                    if (hasRoot) { execRoot("svc wifi ${if (enable) "enable" else "disable"}"); "WiFi已${if (enable) "打开" else "关闭"} (Root)" }
+                    else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) { systemAmStart(Settings.Panel.ACTION_WIFI); "WiFi面板已打开" }
+                    else { try { wifiManager?.isWifiEnabled = enable; "WiFi已${if (enable) "打开" else "关闭"}" } catch (_:Exception) { "需Root" } }
                 }
                 "toggle_bluetooth" -> {
                     val enable = args.optBoolean("enable")
-                    if (enable) bluetoothAdapter?.enable() else bluetoothAdapter?.disable()
+                    if (hasRoot) { execRoot("service call bluetooth_manager ${if (enable) "6" else "8"}"); "蓝牙已${if (enable) "打开" else "关闭"} (Root)" }
+                    else if (enable) bluetoothAdapter?.enable() else bluetoothAdapter?.disable()
                     "蓝牙 ${if (enable) "正在打开" else "正在关闭"}"
                 }
                 "toggle_flashlight" -> {
