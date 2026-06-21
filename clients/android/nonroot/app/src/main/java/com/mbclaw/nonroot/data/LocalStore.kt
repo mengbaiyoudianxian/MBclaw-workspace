@@ -54,10 +54,15 @@ class UserSettings(context: Context) {
 // ── 本地数据库 (SQLite) ──
 
 class LocalDB(context: Context) : SQLiteOpenHelper(
-    context, "mbclaw_local.db", null, 2  // v2: 蓝图完整schema
+    context, "mbclaw_local.db", null, 4  // v4: +projects
 ) {
     override fun onCreate(db: SQLiteDatabase) {
-        // ── 核心表 ──
+        // ── 蓝图 2.1: users ──
+        db.execSQL("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, created_at INTEGER NOT NULL)")
+        db.execSQL("INSERT INTO users (name, created_at) VALUES ('手机主人', ${System.currentTimeMillis()})")
+        // ── 蓝图 2.2: projects ──
+        db.execSQL("CREATE TABLE projects (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name TEXT NOT NULL, description TEXT DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)")
+        db.execSQL("INSERT INTO projects (user_id, name, description, created_at, updated_at) VALUES (1, '默认项目', '', ${System.currentTimeMillis()}, ${System.currentTimeMillis()})")
         db.execSQL("CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, thinking TEXT DEFAULT '', message_type TEXT DEFAULT 'message' CHECK(message_type IN ('message','code_change','thinking','decision')), metadata TEXT DEFAULT '{}', created_at INTEGER NOT NULL, memory_refs TEXT)")
         db.execSQL("CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, status TEXT DEFAULT 'active' CHECK(status IN ('active','completed','interrupted')), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)")
         db.execSQL("CREATE TABLE memory (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, value TEXT NOT NULL, source TEXT, created_at INTEGER NOT NULL, accessed_at INTEGER NOT NULL, access_count INTEGER DEFAULT 0)")
@@ -86,6 +91,14 @@ class LocalDB(context: Context) : SQLiteOpenHelper(
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldV: Int, newV: Int) {
+        if (oldV < 4) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name TEXT NOT NULL, description TEXT DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)")
+            db.execSQL("INSERT OR IGNORE INTO projects (user_id, name, description, created_at, updated_at) VALUES (1, '默认项目', '', ${System.currentTimeMillis()}, ${System.currentTimeMillis()})")
+        }
+        if (oldV < 3) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, created_at INTEGER NOT NULL)")
+            db.execSQL("INSERT OR IGNORE INTO users (name, created_at) VALUES ('手机主人', ${System.currentTimeMillis()})")
+        }
         if (oldV < 2) {
             // v1→v2: 添加蓝图全部表 + 扩展messages字段
             try { db.execSQL("ALTER TABLE messages ADD COLUMN thinking TEXT DEFAULT ''") } catch (_: Exception) {}

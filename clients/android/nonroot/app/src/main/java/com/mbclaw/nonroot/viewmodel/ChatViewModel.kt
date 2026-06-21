@@ -109,7 +109,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 _uiState.value = _uiState.value.copy(
                     messages = _uiState.value.messages + UIMessage(
                         role = "assistant", content = reply,
-                        memoryRefs = memories,
+                        memoryRefs = emptyList(),
                     ),
                     isThinking = false,
                     sessions = db.getSessions(),
@@ -159,7 +159,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (oldId.isNotBlank()) {
             // 旧会话结束 → 触发完整10步流程
             viewModelScope.launch {
-                blueprint.sessionCompleteFullFlow(oldId)
+                blueprint.sessionCompleteFullFlow(oldId, settings)
                 hermes.onSessionEnd(oldId)
                 refreshMemoryStats()
             }

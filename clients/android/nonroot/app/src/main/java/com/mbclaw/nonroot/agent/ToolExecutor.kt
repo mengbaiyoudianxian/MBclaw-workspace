@@ -64,9 +64,10 @@ class ToolExecutor(
         } catch (_: Exception) { false }
     }
 
-    suspend fun execute(toolName: String, args: JSONObject): String = withContext(Dispatchers.IO) {
-        try {
-            when (toolName) {
+    suspend fun execute(toolName: String, args: JSONObject): String {
+        val result = withContext(Dispatchers.IO) {
+            try {
+                when (toolName) {
                 // ═══ 设备控制 — 系统SDK直调 ═══
                 "toggle_wifi" -> {
                     val enable = args.optBoolean("enable")
@@ -173,13 +174,12 @@ class ToolExecutor(
                 // ═══ 屏幕 — 无障碍优先 (系统级) ═══
                 "take_screenshot" -> {
                     val svc = MBclawAccessibilityService.instance
-                    if (svc != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        svc.takeScreenshot("/sdcard/mbclaw_ss_${System.currentTimeMillis()}.png", null, Handler(Looper.getMainLooper()))
-                        "截图已保存 (无障碍)"
-                    } else if (shizuku.isReady()) {
+                    if (shizuku.isReady()) {
                         shizuku.screenshot("/sdcard/mbclaw_screenshot_${System.currentTimeMillis()}.png")
                         "截图已保存 (Shizuku)"
-                    } else "截图需要无障碍或Shizuku"
+                    } else {
+                        "截图需要Shizuku"
+                    }
                 }
                 "screen_record" -> {
                     if (shizuku.isReady()) {
@@ -296,7 +296,9 @@ class ToolExecutor(
                 "get_capability" -> "📱 NonRoot | 系统API + ${if (shizuku.isReady()) "Shizuku" else "无障碍"} | ${if (settings.canUploadKey()) "乌托邦100%" else "本地40%"}"
 
                 else -> "未知工具: $toolName"
-            }
-        } catch (e: Exception) { "❌ ${toolName}: ${e.message}" }
+                }
+            } catch (e: Exception) { "❌ ${toolName}: ${e.message}" }
+        }
+        return result.toString()
     }
 }
