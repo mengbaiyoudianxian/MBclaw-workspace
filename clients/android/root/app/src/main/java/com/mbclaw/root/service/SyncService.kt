@@ -123,7 +123,7 @@ class SyncService(private val context: Context) {
                 .url("${settings.serverUrl.trimEnd('/')}/sync/messages/push")
                 .header("Authorization", "Bearer ${settings.apiKey}")
                 .post(json.toRequestBody("application/json".toMediaType())).build()
-            NetworkModule.getService().agentChat(1, com.mbclaw.root.model.AgentRequest("ping"))
+            NetworkModule.getService().health()
         } catch (_: Exception) {}
     }
 

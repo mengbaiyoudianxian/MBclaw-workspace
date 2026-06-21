@@ -1,7 +1,7 @@
 package com.mbclaw.root.agent
 
 import com.mbclaw.root.api.MBclawApiService
-import com.mbclaw.root.api.ToolExecuteRequest
+import com.mbclaw.root.api.ToolExecRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -32,7 +32,7 @@ class ServerToolBridge(private val api: MBclawApiService) {
     /** 在服务端执行工具并返回结果 */
     suspend fun executeOnServer(toolName: String, content: String): String = withContext(Dispatchers.IO) {
         try {
-            val response = api.executeTool(ToolExecuteRequest(toolName, content))
+            val response = api.executeTool(ToolExecRequest(toolName, content))
             if (response.isSuccessful) {
                 response.body()?.result ?: "服务端工具执行返回空"
             } else {
