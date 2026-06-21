@@ -9,12 +9,15 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
+// 主色 → 小米橙；辅色 → 晴空蓝；MiClaw 风格强调 surface 而非 primary
 private val DarkColorScheme = darkColorScheme(
-    primary = MBclawBlue,
+    primary = MBclawOrange,
     onPrimary = Color.White,
-    primaryContainer = MBclawBlue.copy(alpha = 0.15f),
-    secondary = MBclawGreen,
-    tertiary = MBclawOrange,
+    primaryContainer = MBclawOrange.copy(alpha = 0.18f),
+    onPrimaryContainer = MBclawOrange,
+    secondary = MBclawBlue,
+    secondaryContainer = MBclawBlue.copy(alpha = 0.15f),
+    tertiary = MBclawGreen,
     error = MBclawRed,
     background = DarkBackground,
     surface = DarkSurface,
@@ -26,11 +29,13 @@ private val DarkColorScheme = darkColorScheme(
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = MBclawBlue,
+    primary = MBclawOrange,
     onPrimary = Color.White,
-    primaryContainer = MBclawBlue.copy(alpha = 0.12f),
-    secondary = MBclawGreen,
-    tertiary = MBclawOrange,
+    primaryContainer = MBclawOrange.copy(alpha = 0.12f),
+    onPrimaryContainer = MBclawOrange,
+    secondary = MBclawBlue,
+    secondaryContainer = MBclawBlue.copy(alpha = 0.10f),
+    tertiary = MBclawGreen,
     error = MBclawRed,
     background = LightBackground,
     surface = LightSurface,

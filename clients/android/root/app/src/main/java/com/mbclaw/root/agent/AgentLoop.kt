@@ -34,7 +34,36 @@ class AgentLoop(
     private val gson = Gson()
     private val http = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).build()
 
-    suspend fun run(userMessage: String, sessionId: String, maxTurns: Int = 5): String = withContext(Dispatchers.IO) {
+    // 当前任务状态（UI 顶部可观察）
+    @Volatile var running: Boolean = false; private set
+    @Volatile var currentTurn: Int = 0; private set
+    @Volatile var currentTool: String = ""; private set
+    @Volatile var totalTurns: Int = 20; private set
+    private val cancelFlag = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** UI 调用：终止当前 agent 循环 */
+    fun cancel() { cancelFlag.set(true) }
+
+    /** UI 调用：实时状态 */
+    fun statusLine(): String = when {
+        !running -> ""
+        currentTool.isNotBlank() -> "🤖 第 $currentTurn/$totalTurns 轮 · 调用 $currentTool"
+        else -> "🤖 第 $currentTurn/$totalTurns 轮 · 思考中…"
+    }
+
+    suspend fun run(
+        userMessage: String,
+        sessionId: String,
+        maxTurns: Int = 20,
+        onStatus: ((String) -> Unit)? = null,
+    ): String = withContext(Dispatchers.IO) {
+        running = true
+        cancelFlag.set(false)
+        totalTurns = maxTurns
+        currentTurn = 0
+        currentTool = ""
+
+        try {
         // 蓝图P7: 保存checkpoint
         val taskId = System.currentTimeMillis()
         com.mbclaw.root.hermes.BlueprintComplete(context, db).taskEnqueue("agent_loop", 50, userMessage)
@@ -68,13 +97,20 @@ class AgentLoop(
         var turns = 0
 
         while (turns < maxTurns) {
+            if (cancelFlag.get()) { lastResponse = "⏹ 已手动终止 (第 $turns 轮)"; break }
             turns++
+            currentTurn = turns
+            currentTool = ""
+            onStatus?.invoke(statusLine())
             // 最后一轮: 强制 LLM 给最终答案，不再执行工具
             if (turns >= maxTurns) {
                 messages.add(AgentMsg("system", "已达最大轮次。请直接给出最终回答，不要再调用工具。"))
             }
             val result = callWithTools(messages)
+            if (cancelFlag.get()) { lastResponse = "⏹ 已手动终止 (第 $turns 轮)"; break }
             if (result.toolCall != null && turns < maxTurns) {
+                currentTool = result.toolCall.name
+                onStatus?.invoke(statusLine())
                 val toolResult = toolExecutor.execute(result.toolCall.name, result.toolCall.arguments)
                 messages.add(AgentMsg("assistant", null, listOf(result.toolCall)))
                 messages.add(AgentMsg("tool", toolResult, toolCallId = result.toolCall.id))
@@ -101,6 +137,11 @@ class AgentLoop(
         db.writableDatabase.execSQL("UPDATE messages SET thinking=?, message_type='thinking' WHERE id=(SELECT id FROM messages WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1)", arrayOf("agent_loop_${turns}turns", sessionId))
 
         return@withContext lastResponse
+        } finally {
+            running = false
+            currentTool = ""
+            onStatus?.invoke("")
+        }
     }
 
     // 蓝图08 P0: Memory Flush — 上下文接近限制时静默保存

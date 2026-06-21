@@ -33,25 +33,10 @@ class ToolExecutor(
     private val realEngine: RealEngine,
 ) {
     private val shizuku = ShizukuManager(context)
-    // Root 检测: 系统API > Root > Shizuku > 无障碍
-    private val hasRoot: Boolean by lazy {
-        try {
-            // 方法1: 直接执行 su
-            val p1 = Runtime.getRuntime().exec(arrayOf("su","-c","echo root_ok"))
-            val out1 = p1.inputStream.bufferedReader().readText()
-            p1.waitFor()
-            if (out1.contains("root_ok")) return@lazy true
-            // 方法2: 检查 Magisk
-            val p2 = Runtime.getRuntime().exec(arrayOf("sh","-c","which su || ls /sbin/su || ls /system/xbin/su 2>/dev/null"))
-            val out2 = p2.inputStream.bufferedReader().readText()
-            p2.waitFor()
-            out2.isNotBlank()
-        } catch (_:Exception) { false }
-    }
-    private fun execRoot(cmd: String): String? = try {
-        val p = Runtime.getRuntime().exec(arrayOf("su","-c",cmd)); p.waitFor()
-        p.inputStream.bufferedReader().readText().trim()
-    } catch (_:Exception) { null }
+    // 统一权限分层 (2026-06-22 锁定优先级): 系统 API > Root > ADB(Shizuku) > 无障碍
+    private val tier = PermissionTier.get(context)
+    private val hasRoot: Boolean get() = tier.hasRoot
+    private fun execRoot(cmd: String): String? = tier.shellRoot(cmd)
     private val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     private val bluetoothAdapter = android.bluetooth.BluetoothAdapter.getDefaultAdapter()
@@ -321,7 +306,13 @@ class ToolExecutor(
                     val kws = args.optJSONArray("keywords") ?: return@withContext "无关键词"
                     realEngine.collision((0 until kws.length()).map { kws.getString(it) })
                 }
-                "get_capability" -> "📱 NonRoot | 系统API + ${if (shizuku.isReady()) "Shizuku" else "无障碍"} | ${if (settings.canUploadKey()) "乌托邦100%" else "本地40%"}"
+                "get_capability" -> {
+                    val r = if (tier.hasRoot) "✅ROOT" else "❌root"
+                    val a = if (tier.hasAdb) "✅ADB" else "❌adb"
+                    val ac = if (tier.hasAccessibility) "✅无障碍" else "❌无障碍"
+                    val best = tier.bestTier().name
+                    "📱 权限层 (系统API > Root > ADB > 无障碍)\n当前可用: $r / $a / $ac\n最高层: $best | ${if (settings.canUploadKey()) "乌托邦100%" else "本地40%"}"
+                }
 
                 else -> "未知工具: $toolName"
                 }
