@@ -1,80 +1,154 @@
 package com.mbclaw.root.ui.screens
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.mbclaw.root.agent.ToolRegistry
 
 /**
- * 工具屏幕 — 保留 MiClaw 原版 386 工具能力
- * 增加：MBclaw 记忆搜索 + 技能卡
+ * 工具屏幕 — 仿 MiClaw 工具市场
+ * • 顶部统计条 (实时计数)
+ * • 分类标签条 (横滚 chips)
+ * • 卡片化工具列表
  */
 @Composable
 fun ToolsScreen() {
-    val tools = remember {
+    var selectedCat by remember { mutableStateOf("全部") }
+    val allTools = remember { ToolRegistry.ALL }
+
+    val cats = remember {
+        // 简单按工具名前缀分类（仿 MiClaw 分组）
         listOf(
-            ToolItem("wifi", "WiFi 管理", "打开/关闭/连接/扫描/热点共享", Icons.Filled.Wifi),
-            ToolItem("bluetooth", "蓝牙", "配对/连接/传输文件/音频设备", Icons.Filled.Bluetooth),
-            ToolItem("sms", "短信", "发送/读取/搜索/备份/拦截", Icons.Filled.Sms),
-            ToolItem("call", "通话", "拨号/接听/录音/号码拦截", Icons.Filled.Call),
-            ToolItem("camera", "相机", "拍照/录像/二维码扫描/文字识别", Icons.Filled.CameraAlt),
-            ToolItem("screen", "录屏截图", "录制/截屏/投屏/区域截取", Icons.Filled.Screenshot),
-            ToolItem("file", "文件管理", "浏览/搜索/压缩/传输/加密", Icons.Filled.Folder),
-            ToolItem("calendar", "日历", "查看/添加/提醒/日程同步", Icons.Filled.CalendarMonth),
-            ToolItem("note", "笔记", "创建/编辑/搜索/云同步", Icons.Filled.Note),
-            ToolItem("browser", "浏览器", "网页搜索/书签/下载管理", Icons.Filled.Public),
-            ToolItem("map", "地图导航", "位置搜索/路线规划/兴趣点", Icons.Filled.Map),
-            ToolItem("home", "智能家居", "灯光/空调/窗帘/门锁控制", Icons.Filled.Home),
-            ToolItem("system", "系统控制", "音量/亮度/省电/应用管理/重启", Icons.Filled.Settings),
-            ToolItem("sandbox", "本地沙箱", "Linux环境/危险指令隔离执行", Icons.Filled.Terminal),
-            ToolItem("agent", "智能体", "子Agent协作/思维碰撞/双Key审查", Icons.Filled.Psychology),
-            ToolItem("memory", "记忆搜索", "全文搜索/语义搜索/关键词唤醒", Icons.Filled.Search),
+            "全部" to allTools,
+            "系统" to allTools.filter { it.name.startsWith("toggle_") || it.name in listOf("set_brightness","set_volume","get_battery","device_status","get_system_info","check_permissions") },
+            "WiFi" to allTools.filter { it.name.contains("wifi", true) },
+            "蓝牙" to allTools.filter { it.name.startsWith("bluetooth_") },
+            "通讯" to allTools.filter { it.name.contains("sms") || it.name.contains("call") || it.name.contains("phone") || it.name.contains("contact") },
+            "文件" to allTools.filter { it.name.contains("file") || it.name in listOf("read_file","write_file","append_file","edit_file","delete_file","copy_file","move_file","list_files","search_files","file_grep","file_info") },
+            "屏幕" to allTools.filter { it.name in listOf("take_screenshot","screen_record","click_at","long_press_at","swipe","input_text","press_key") },
+            "媒体" to allTools.filter { it.name.contains("media") || it.name == "camera" || it.name.contains("control_media") },
+            "日历" to allTools.filter { it.name.contains("calendar") },
+            "应用" to allTools.filter { it.name.contains("app_") || it.name in listOf("open_app","list_apps","uninstall_app","force_stop_app") },
+            "Web" to allTools.filter { it.name in listOf("url_fetch","web_search","browser_open","browser_extract","browser_click","browser_input","browser_close","get_weather") },
+            "记忆" to allTools.filter { it.name in listOf("search_memory","dream_memory","classify_conversation","dual_key_review","collision_think","search_history","load_message") },
+            "高级" to allTools.filter { it.name in listOf("local_sandbox_run","list_agents","start_agent","timer","get_location","send_intent","send_notification","get_capability") },
         )
     }
+    val current = cats.find { it.first == selectedCat }?.second ?: allTools
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        item {
-            Text("🛠 工具市场", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(4.dp))
-            Text("继承 MiClaw 386 工具 + MBclaw 智能增强",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(8.dp))
-        }
-        items(tools) { tool ->
-            ElevatedCard(
-                modifier = Modifier.fillMaxWidth().clickable { },
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(tool.icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(tool.name, style = MaterialTheme.typography.titleSmall)
-                        Text(tool.desc, style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Column(Modifier.fillMaxSize()) {
+        // ─── 顶部统计 ───
+        Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("🛠 工具市场", fontWeight = FontWeight.Bold,
+                         style = MaterialTheme.typography.titleLarge)
+                    Spacer(Modifier.weight(1f))
+                    Surface(shape = RoundedCornerShape(50),
+                            color = MaterialTheme.colorScheme.primaryContainer) {
+                        Text(" ${allTools.size} 个工具 ",
+                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                             style = MaterialTheme.typography.labelMedium,
+                             color = MaterialTheme.colorScheme.onPrimaryContainer,
+                             fontWeight = FontWeight.SemiBold)
                     }
-                    Icon(Icons.Filled.ChevronRight, contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Spacer(Modifier.height(4.dp))
+                Text("仿 MiClaw 命名 · root shell 落地 · 87 工具实际可调",
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.outline)
+            }
+        }
+        // ─── 分类 chips ───
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            cats.forEach { (label, list) ->
+                FilterChip(
+                    selected = selectedCat == label,
+                    onClick = { selectedCat = label },
+                    label = { Text("$label (${list.size})", style = MaterialTheme.typography.labelMedium) },
+                    shape = RoundedCornerShape(50),
+                )
+            }
+        }
+        // ─── 工具列表 ───
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(current) { tool ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().clickable {},
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                ) {
+                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Surface(shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                modifier = Modifier.size(40.dp)) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(iconFor(tool.name), null,
+                                     tint = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(tool.name, fontWeight = FontWeight.SemiBold,
+                                 style = MaterialTheme.typography.titleSmall)
+                            Spacer(Modifier.height(2.dp))
+                            Text(tool.description,
+                                 style = MaterialTheme.typography.bodySmall,
+                                 color = MaterialTheme.colorScheme.outline,
+                                 maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-data class ToolItem(val id: String, val name: String, val desc: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
+private fun iconFor(name: String) = when {
+    name.contains("wifi", true) -> Icons.Filled.Wifi
+    name.startsWith("bluetooth") -> Icons.Filled.Bluetooth
+    name.contains("sms") || name.contains("message") -> Icons.Filled.Sms
+    name.contains("call") || name.contains("phone") -> Icons.Filled.Call
+    name.contains("contact") -> Icons.Filled.Contacts
+    name == "camera" -> Icons.Filled.CameraAlt
+    name.contains("screen") -> Icons.Filled.Screenshot
+    name.contains("file") || name in listOf("write_file","read_file","append_file","edit_file","delete_file","copy_file","move_file","list_files","search_files","file_grep","file_info") -> Icons.Filled.Folder
+    name.contains("calendar") -> Icons.Filled.CalendarMonth
+    name.contains("browser") || name == "url_fetch" || name == "web_search" -> Icons.Filled.Public
+    name.contains("media") || name == "control_media" -> Icons.Filled.MusicNote
+    name.contains("weather") -> Icons.Filled.Cloud
+    name.contains("location") -> Icons.Filled.LocationOn
+    name.contains("app_") || name in listOf("open_app","list_apps","uninstall_app","force_stop_app") -> Icons.Filled.Apps
+    name.contains("memory") || name == "search_memory" || name == "search_history" -> Icons.Filled.Psychology
+    name == "local_sandbox_run" -> Icons.Filled.Terminal
+    name == "timer" -> Icons.Filled.Schedule
+    name.contains("clipboard") -> Icons.Filled.ContentCopy
+    name.contains("notification") -> Icons.Filled.Notifications
+    name.contains("brightness") -> Icons.Filled.BrightnessMedium
+    name.contains("volume") -> Icons.Filled.VolumeUp
+    name == "get_battery" -> Icons.Filled.BatteryStd
+    name.contains("flashlight") -> Icons.Filled.FlashOn
+    name.contains("airplane") -> Icons.Filled.FlightTakeoff
+    else -> Icons.Filled.Build
+}

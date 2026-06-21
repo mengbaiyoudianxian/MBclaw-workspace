@@ -314,6 +314,322 @@ class ToolExecutor(
                     "📱 权限层 (系统API > Root > ADB > 无障碍)\n当前可用: $r / $a / $ac\n最高层: $best | ${if (settings.canUploadKey()) "乌托邦100%" else "本地40%"}"
                 }
 
+                // ═══════════════════════════════════════════════════════════
+                // 仿 MiClaw 工具 — 大部分用 root shell 直接落地
+                // root 版假设有 su，没有 root 时返回明确错误
+                // ═══════════════════════════════════════════════════════════
+
+                // ── WiFi ──
+                "list_wifi_networks" -> execRoot("cmd wifi list-scan-results 2>/dev/null || dumpsys wifi | head -40") ?: "需 Root"
+                "connect_wifi" -> {
+                    val ssid = args.optString("ssid"); val pw = args.optString("password")
+                    if (pw.isNotBlank()) execRoot("cmd wifi connect-network '$ssid' wpa2 '$pw'") ?: "连接失败"
+                    else execRoot("cmd wifi connect-network '$ssid' open") ?: "需 Root 或已保存网络"
+                }
+                "disconnect_wifi" -> execRoot("cmd wifi disconnect") ?: "需 Root"
+                "switch_wifi" -> execRoot("cmd wifi reconnect") ?: "需 Root"
+                "wifi_info" -> execRoot("dumpsys wifi | grep -E 'mWifiInfo|SSID|RSSI|Frequency' | head -10") ?: "需 Root"
+
+                // ── 蓝牙 ──
+                "bluetooth_scan" -> {
+                    val dur = args.optInt("scan_duration", 10)
+                    if (bluetoothAdapter == null) "蓝牙不可用"
+                    else { bluetoothAdapter!!.startDiscovery(); kotlinx.coroutines.delay(dur * 1000L); bluetoothAdapter!!.cancelDiscovery(); "扫描完成 (${dur}s)" }
+                }
+                "bluetooth_connect" -> {
+                    val addr = args.optString("device_address")
+                    execRoot("am broadcast -a android.bluetooth.device.action.BOND_STATE_CHANGED --es android.bluetooth.device.extra.DEVICE '$addr'") ?: "需 Root"
+                }
+                "bluetooth_disconnect" -> execRoot("dumpsys bluetooth_manager | grep ${args.optString("device_address")}") ?: "需 Root"
+                "bluetooth_paired_devices" -> bluetoothAdapter?.bondedDevices?.joinToString("\n") { "  ${it.name} (${it.address})" } ?: "无配对设备"
+                "bluetooth_status" -> {
+                    val state = bluetoothAdapter?.isEnabled
+                    val name = bluetoothAdapter?.name ?: "?"
+                    "开关: ${if (state == true) "开" else "关"} | 本机: $name"
+                }
+
+                // ── 联系人 ──
+                "manage_contacts" -> {
+                    val action = args.optString("action")
+                    val name = args.optString("name"); val phone = args.optString("phone")
+                    when (action) {
+                        "create" -> {
+                            val intent = Intent(Intent.ACTION_INSERT).apply {
+                                type = android.provider.ContactsContract.Contacts.CONTENT_TYPE
+                                putExtra(android.provider.ContactsContract.Intents.Insert.NAME, name)
+                                putExtra(android.provider.ContactsContract.Intents.Insert.PHONE, phone)
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(intent); "创建联系人界面已打开"
+                        }
+                        else -> "暂不支持 action=$action"
+                    }
+                }
+                "search_contacts" -> {
+                    val q = args.optString("query")
+                    val uri = android.net.Uri.withAppendedPath(android.provider.ContactsContract.PhoneLookup.CONTENT_FILTER_URI, android.net.Uri.encode(q))
+                    val cur = context.contentResolver.query(uri, arrayOf(android.provider.ContactsContract.PhoneLookup.DISPLAY_NAME, android.provider.ContactsContract.PhoneLookup.NUMBER), null, null, null)
+                    val sb = StringBuilder()
+                    cur?.use { while (it.moveToNext()) sb.appendLine("  ${it.getString(0)} : ${it.getString(1)}") }
+                    sb.toString().ifBlank { "未找到 $q" }
+                }
+
+                // ── 位置 / 设备 ──
+                "get_location" -> {
+                    val lm = context.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+                    if (context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) "需要定位权限"
+                    else {
+                        val loc = lm.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
+                            ?: lm.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
+                        loc?.let { "经度 ${it.longitude}, 纬度 ${it.latitude}, 精度 ${it.accuracy}m" } ?: "无定位记录"
+                    }
+                }
+                "device_status" -> XiaomiApi.getDeviceInfo() + "\n" + (execRoot("dumpsys batterystats | head -5") ?: "")
+                "send_notification" -> {
+                    val title = args.optString("title"); val content = args.optString("content")
+                    val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        val ch = android.app.NotificationChannel("mbclaw_agent", "MBclaw Agent", android.app.NotificationManager.IMPORTANCE_DEFAULT)
+                        nm.createNotificationChannel(ch)
+                    }
+                    val n = androidx.core.app.NotificationCompat.Builder(context, "mbclaw_agent")
+                        .setContentTitle(title).setContentText(content)
+                        .setSmallIcon(android.R.drawable.ic_dialog_info).build()
+                    nm.notify(System.currentTimeMillis().toInt(), n); "通知已发送"
+                }
+                "send_intent" -> {
+                    val action = args.optString("action"); val data = args.optString("data").ifBlank { null }
+                    val target = args.optString("target", "activity")
+                    val intent = Intent(action).apply { data?.let { setData(Uri.parse(it)) }; addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                    when (target) {
+                        "broadcast" -> { context.sendBroadcast(intent); "广播已发送" }
+                        "service"   -> { context.startService(intent); "服务已启动" }
+                        else        -> { context.startActivity(intent); "Activity 已启动" }
+                    }
+                }
+
+                // ── 文件系统 (root 直接 cat/echo/cp 等) ──
+                "write_file" -> {
+                    val path = args.optString("path"); val content = args.optString("content")
+                    if (tier.hasRoot) {
+                        val tmp = "/data/local/tmp/mbclaw_w_${System.currentTimeMillis()}"
+                        java.io.File(tmp).writeText(content)
+                        execRoot("mkdir -p \"$(dirname '$path')\" && cp '$tmp' '$path' && rm '$tmp'")
+                        "已写入 $path"
+                    } else {
+                        try { java.io.File(path).also { it.parentFile?.mkdirs() }.writeText(content); "已写入 $path" }
+                        catch (e: Exception) { "失败: ${e.message}" }
+                    }
+                }
+                "append_file" -> {
+                    val path = args.optString("path"); val content = args.optString("content")
+                    if (tier.hasRoot) execRoot("printf '%s' '${content.replace("'", "'\\''")}' >> '$path' && echo OK") ?: "失败"
+                    else try { java.io.File(path).appendText(content); "已追加" } catch (e: Exception) { "失败: ${e.message}" }
+                }
+                "edit_file" -> {
+                    val path = args.optString("path"); val oldT = args.optString("old_text"); val newT = args.optString("new_text")
+                    try {
+                        val f = java.io.File(path)
+                        val txt = if (tier.hasRoot) execRoot("cat '$path'") ?: f.readText() else f.readText()
+                        if (oldT !in txt) "未找到 old_text"
+                        else { val nu = txt.replace(oldT, newT); if (tier.hasRoot) { val tmp = "/data/local/tmp/mbclaw_e_${System.currentTimeMillis()}"; java.io.File(tmp).writeText(nu); execRoot("cp '$tmp' '$path' && rm '$tmp'"); "已替换" } else { f.writeText(nu); "已替换" } }
+                    } catch (e: Exception) { "失败: ${e.message}" }
+                }
+                "delete_file" -> {
+                    val path = args.optString("path")
+                    if (tier.hasRoot) execRoot("rm -rf '$path' && echo OK") ?: "失败"
+                    else try { java.io.File(path).deleteRecursively().let { if (it) "已删除" else "失败" } } catch (e: Exception) { "失败: ${e.message}" }
+                }
+                "copy_file" -> execRoot("cp -r '${args.optString("src")}' '${args.optString("dst")}' && echo OK") ?: try { java.io.File(args.optString("src")).copyRecursively(java.io.File(args.optString("dst")), true); "已拷贝" } catch (e: Exception) { "失败: ${e.message}" }
+                "move_file" -> execRoot("mv '${args.optString("src")}' '${args.optString("dst")}' && echo OK") ?: try { java.io.File(args.optString("src")).renameTo(java.io.File(args.optString("dst"))).let { if (it) "已移动" else "失败" } } catch (e: Exception) { "失败: ${e.message}" }
+                "list_files" -> execRoot("ls -la '${args.optString("path")}' 2>&1 | head -50") ?: try { java.io.File(args.optString("path")).listFiles()?.joinToString("\n") { "  ${if (it.isDirectory) "d" else "-"} ${it.name}" } ?: "目录为空" } catch (e: Exception) { "失败: ${e.message}" }
+                "search_files" -> execRoot("find '${args.optString("path")}' -name '${args.optString("pattern")}' 2>/dev/null | head -50") ?: "需 Root"
+                "file_grep" -> execRoot("grep -rn '${args.optString("pattern")}' '${args.optString("path")}' 2>/dev/null | head -50") ?: "需 Root"
+                "file_info" -> execRoot("stat '${args.optString("path")}' 2>&1") ?: try { val f = java.io.File(args.optString("path")); if (f.exists()) "大小 ${f.length()} | 可读 ${f.canRead()} | mtime ${java.util.Date(f.lastModified())}" else "不存在" } catch (e: Exception) { "失败: ${e.message}" }
+
+                // ── 浏览器 (用系统 Intent 唤起系统浏览器，后台 headless 需 webview) ──
+                "browser_open" -> { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(args.optString("url"))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); "已打开 ${args.optString("url")}" }
+                "browser_extract" -> "需后台浏览器引擎（roadmap，先用 url_fetch 替代）"
+                "browser_click" -> "需后台浏览器引擎（roadmap）"
+                "browser_input" -> "需后台浏览器引擎（roadmap）"
+                "browser_close" -> "浏览器已交还系统"
+
+                // ── Web ──
+                "url_fetch" -> {
+                    try {
+                        val u = java.net.URL(args.optString("url"))
+                        val conn = u.openConnection() as java.net.HttpURLConnection
+                        conn.connectTimeout = 8000; conn.readTimeout = 8000
+                        val txt = conn.inputStream.bufferedReader().readText().take(3000)
+                        "HTTP ${conn.responseCode}\n${txt}"
+                    } catch (e: Exception) { "失败: ${e.message}" }
+                }
+                "web_search" -> {
+                    try {
+                        val q = java.net.URLEncoder.encode(args.optString("query"), "UTF-8")
+                        val u = java.net.URL("https://www.bing.com/search?q=$q")
+                        val conn = u.openConnection() as java.net.HttpURLConnection
+                        conn.connectTimeout = 8000; conn.readTimeout = 8000
+                        conn.setRequestProperty("User-Agent", "Mozilla/5.0 MBclaw")
+                        val html = conn.inputStream.bufferedReader().readText()
+                        // 粗暴抽 h2 标题
+                        val titles = Regex("<h2[^>]*>([^<]+)</h2>").findAll(html).map { it.groupValues[1] }.take(8).toList()
+                        if (titles.isEmpty()) "无结果" else titles.joinToString("\n") { "• $it" }
+                    } catch (e: Exception) { "失败: ${e.message}" }
+                }
+
+                // ── 日历 ──
+                "create_calendar_event" -> {
+                    val title = args.optString("title"); val start = args.optString("start_time")
+                    val intent = Intent(Intent.ACTION_INSERT).apply {
+                        data = android.provider.CalendarContract.Events.CONTENT_URI
+                        putExtra(android.provider.CalendarContract.Events.TITLE, title)
+                        putExtra(android.provider.CalendarContract.Events.EVENT_LOCATION, args.optString("location"))
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent); "日历创建界面已打开: $title"
+                }
+                "read_calendar" -> {
+                    val uri = android.provider.CalendarContract.Events.CONTENT_URI
+                    val cur = context.contentResolver.query(uri, arrayOf("_id", "title", "dtstart"), null, null, "dtstart DESC LIMIT 10")
+                    val sb = StringBuilder()
+                    cur?.use { while (it.moveToNext()) sb.appendLine("  [${it.getString(0)}] ${it.getString(1)} @ ${java.util.Date(it.getLong(2))}") }
+                    sb.toString().ifBlank { "无事件或缺权限" }
+                }
+                "update_calendar_event" -> "事件 ${args.optString("event_id")} — 暂走 Intent，请手动修改"
+                "delete_calendar_event" -> "事件 ${args.optString("event_id")} — 暂走 Intent，请手动删除"
+
+                // ── 通话 ──
+                "call_log_list" -> {
+                    val uri = android.provider.CallLog.Calls.CONTENT_URI
+                    val cur = context.contentResolver.query(uri, arrayOf(android.provider.CallLog.Calls.NUMBER, android.provider.CallLog.Calls.DATE, android.provider.CallLog.Calls.TYPE), null, null, "${android.provider.CallLog.Calls.DATE} DESC")
+                    val limit = args.optInt("limit", 20); val sb = StringBuilder(); var i = 0
+                    cur?.use { while (it.moveToNext() && i++ < limit) sb.appendLine("  ${it.getString(0)} @ ${java.util.Date(it.getLong(1))} type=${it.getInt(2)}") }
+                    sb.toString().ifBlank { "无记录或缺权限" }
+                }
+                "call_log_delete" -> execRoot("content delete --uri content://call_log/calls --where '_id=${args.optString("id")}'") ?: "需 Root"
+                "hangup_phone" -> execRoot("input keyevent KEYCODE_ENDCALL") ?: "需 Root"
+                "dial_phone" -> { systemAmStart(Intent.ACTION_CALL, "tel:${args.optString("phone")}"); "正在拨号 ${args.optString("phone")}" }
+
+                // ── 媒体 ──
+                "camera" -> {
+                    val act = args.optString("action")
+                    val intent = if (act == "video") Intent(android.provider.MediaStore.ACTION_VIDEO_CAPTURE) else Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(intent); "相机已打开 ($act)"
+                }
+                "control_media" -> {
+                    val keycode = when (args.optString("action")) {
+                        "play" -> android.view.KeyEvent.KEYCODE_MEDIA_PLAY
+                        "pause" -> android.view.KeyEvent.KEYCODE_MEDIA_PAUSE
+                        "toggle" -> android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+                        "next" -> android.view.KeyEvent.KEYCODE_MEDIA_NEXT
+                        "previous" -> android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS
+                        "forward" -> android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD
+                        "rewind" -> android.view.KeyEvent.KEYCODE_MEDIA_REWIND
+                        "volume_up" -> android.view.KeyEvent.KEYCODE_VOLUME_UP
+                        "volume_down" -> android.view.KeyEvent.KEYCODE_VOLUME_DOWN
+                        else -> 0
+                    }
+                    if (keycode > 0) { execRoot("input keyevent $keycode") ?: run { audioManager?.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keycode)); audioManager?.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keycode)); "媒体键 ${args.optString("action")}" } } else "未知 action"
+                }
+                "get_media_info" -> {
+                    val mm = context.getSystemService(Context.MEDIA_SESSION_SERVICE) as android.media.session.MediaSessionManager
+                    try {
+                        val sessions = mm.getActiveSessions(null)
+                        if (sessions.isEmpty()) "无活动媒体会话"
+                        else sessions.first().let { ctrl -> val md = ctrl.metadata; "应用 ${ctrl.packageName}\n标题 ${md?.getString(android.media.MediaMetadata.METADATA_KEY_TITLE)}\n歌手 ${md?.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST)}" }
+                    } catch (e: SecurityException) { "需通知使用权" }
+                }
+                "list_media_images" -> {
+                    val uri = android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                    val cur = context.contentResolver.query(uri, arrayOf("_id", "_display_name", "_size"), null, null, "date_added DESC")
+                    val limit = args.optInt("limit", 20); val sb = StringBuilder(); var i = 0
+                    cur?.use { while (it.moveToNext() && i++ < limit) sb.appendLine("  [${it.getString(0)}] ${it.getString(1)} (${it.getLong(2)/1024}KB)") }
+                    sb.toString().ifBlank { "无图片或缺权限" }
+                }
+                "media_store" -> "media_store action=${args.optString("action")} — 复用 list_media_images / get_file_info"
+
+                // ── 时间 / 通用 ──
+                "get_current_time" -> {
+                    val fmt = args.optString("format", "iso")
+                    val now = java.util.Date()
+                    when (fmt) {
+                        "iso" -> java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX").format(now)
+                        "human" -> java.text.SimpleDateFormat("yyyy年MM月dd日 HH:mm:ss").format(now)
+                        "epoch" -> (now.time / 1000).toString()
+                        else -> now.toString()
+                    }
+                }
+                "check_permissions" -> {
+                    val perms = listOf(android.Manifest.permission.SEND_SMS, android.Manifest.permission.READ_SMS, android.Manifest.permission.CALL_PHONE, android.Manifest.permission.READ_CONTACTS, android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.CAMERA, android.Manifest.permission.RECORD_AUDIO, android.Manifest.permission.READ_EXTERNAL_STORAGE)
+                    perms.joinToString("\n") { p -> "  ${if (context.checkSelfPermission(p) == android.content.pm.PackageManager.PERMISSION_GRANTED) "✅" else "❌"} ${p.substringAfterLast('.')}" }
+                }
+                "timer" -> {
+                    val after = args.optInt("after_seconds", 60)
+                    val task = args.optString("task", "提醒")
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) nm.createNotificationChannel(android.app.NotificationChannel("mbclaw_timer", "Timer", android.app.NotificationManager.IMPORTANCE_HIGH))
+                        nm.notify(System.currentTimeMillis().toInt(), androidx.core.app.NotificationCompat.Builder(context, "mbclaw_timer").setContentTitle("MBclaw 定时").setContentText(task).setSmallIcon(android.R.drawable.ic_dialog_alert).build())
+                    }, after * 1000L)
+                    "已设定 ${after}s 后: $task"
+                }
+                "get_weather" -> {
+                    val city = args.optString("city", "")
+                    // 兜底：调 wttr.in（无需 key）
+                    try {
+                        val u = java.net.URL("https://wttr.in/${java.net.URLEncoder.encode(city.ifBlank { "auto" }, "UTF-8")}?format=3&lang=zh")
+                        val conn = u.openConnection() as java.net.HttpURLConnection
+                        conn.connectTimeout = 5000; conn.readTimeout = 5000
+                        conn.inputStream.bufferedReader().readText()
+                    } catch (e: Exception) { "天气获取失败: ${e.message}" }
+                }
+
+                // ── App ──
+                "app_manager" -> {
+                    val act = args.optString("action"); val pkg = args.optString("package_name")
+                    when (act) {
+                        "info" -> { systemAmStart(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:$pkg"); "应用详情已打开" }
+                        "enable" -> execRoot("pm enable $pkg") ?: "需 Root"
+                        "disable" -> execRoot("pm disable $pkg") ?: "需 Root"
+                        "uninstall" -> { systemAmStart(Intent.ACTION_DELETE, "package:$pkg"); "卸载界面已打开" }
+                        else -> "未知 action"
+                    }
+                }
+                "app_shortcut" -> "shortcut action=${args.optString("action")} — 需 ShortcutManager API (roadmap)"
+                "app_usage" -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                        val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as android.app.usage.UsageStatsManager
+                        val end = System.currentTimeMillis(); val start = end - args.optInt("days", 7) * 86400_000L
+                        val stats = usm.queryUsageStats(android.app.usage.UsageStatsManager.INTERVAL_DAILY, start, end)
+                        if (stats.isNullOrEmpty()) "需「使用情况访问」权限" else stats.sortedByDescending { it.totalTimeInForeground }.take(10).joinToString("\n") { "  ${it.packageName}: ${it.totalTimeInForeground/1000/60}min" }
+                    } else "需 Android 5.1+"
+                }
+
+                // ── 历史 ──
+                "search_history" -> {
+                    val q = args.optString("query"); val limit = args.optInt("limit", 10)
+                    db.searchMemory(q, limit).joinToString("\n") { "• [${it.key}] ${it.value.take(120)}" }.ifBlank { "无匹配" }
+                }
+                "load_message" -> "消息 ${args.optString("message_id")} — TODO 接 MessageRepo"
+
+                // ── 本地沙箱 (root shell) ──
+                "local_sandbox_run" -> {
+                    val lang = args.optString("lang"); val code = args.optString("code")
+                    val timeout = args.optInt("timeout_ms", 15000)
+                    val tmp = "/data/local/tmp/mbclaw_box_${System.currentTimeMillis()}"
+                    when (lang) {
+                        "python" -> { java.io.File("$tmp.py").writeText(code); execRoot("timeout ${timeout/1000} python3 $tmp.py 2>&1; rm $tmp.py") ?: "需 Root 且系统安装 python3" }
+                        "shell" -> { java.io.File("$tmp.sh").writeText(code); execRoot("timeout ${timeout/1000} sh $tmp.sh 2>&1; rm $tmp.sh") ?: "需 Root" }
+                        else -> "未知 lang=$lang"
+                    }
+                }
+
+                // ── 子 Agent ──
+                "list_agents" -> "MBclaw / Hand / Hermes / Realtime — 共 4 个内置 agent"
+                "start_agent" -> "切换至 agent=${args.optString("agent_id")} (需 UI 路由支持)"
+
                 else -> "未知工具: $toolName"
                 }
             } catch (e: Exception) { "❌ ${toolName}: ${e.message}" }
