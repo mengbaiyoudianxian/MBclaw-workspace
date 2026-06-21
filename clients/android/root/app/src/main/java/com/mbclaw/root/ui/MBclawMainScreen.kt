@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import kotlinx.coroutines.launch
@@ -360,16 +361,28 @@ private fun formatTime(ts: Long): String {
 @Composable
 private fun AboutDialog(ctx: android.content.Context, onDismiss: () -> Unit) {
     var showQrSheet by remember { mutableStateOf(false) }
+    val logoBmp = remember {
+        try { ctx.assets.open("donate/logo.png").use { android.graphics.BitmapFactory.decodeStream(it) } }
+        catch (_: Exception) { null }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = {
-            Surface(shape = androidx.compose.foundation.shape.CircleShape,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(48.dp)) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text("M", color = androidx.compose.ui.graphics.Color.White,
-                         fontWeight = FontWeight.Bold,
-                         style = MaterialTheme.typography.headlineSmall)
+            if (logoBmp != null) {
+                androidx.compose.foundation.Image(
+                    bitmap = logoBmp.asImageBitmap(),
+                    contentDescription = "MBclaw",
+                    modifier = Modifier.size(56.dp),
+                )
+            } else {
+                Surface(shape = androidx.compose.foundation.shape.CircleShape,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(56.dp)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("M", color = androidx.compose.ui.graphics.Color.White,
+                             fontWeight = FontWeight.Bold,
+                             style = MaterialTheme.typography.headlineSmall)
+                    }
                 }
             }
         },
@@ -430,20 +443,23 @@ private fun AboutRow(title: String, subtitle: String, onClick: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DonateQRSheet(onDismiss: () -> Unit) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("💖 友情赞助", textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                        modifier = Modifier.fillMaxWidth()) },
         text = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("感谢支持，请扫码赞赏 ✨\n（图片占位 — 请上传到服务器后替换）",
+                Text("感谢支持，请扫码赞赏 ✨",
                      textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                      style = MaterialTheme.typography.bodySmall,
                      color = MaterialTheme.colorScheme.outline)
                 Spacer(Modifier.height(16.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    QrPlaceholder("微信", androidx.compose.ui.graphics.Color(0xFF07C160))
-                    QrPlaceholder("支付宝", androidx.compose.ui.graphics.Color(0xFF1677FF))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    QrFromAsset(ctx, "donate/wechat.png", "微信",
+                        androidx.compose.ui.graphics.Color(0xFF07C160))
+                    QrFromAsset(ctx, "donate/alipay.jpg", "支付宝",
+                        androidx.compose.ui.graphics.Color(0xFF1677FF))
                 }
             }
         },
@@ -452,18 +468,33 @@ private fun DonateQRSheet(onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun QrPlaceholder(label: String, tint: androidx.compose.ui.graphics.Color) {
+private fun QrFromAsset(ctx: android.content.Context, path: String, label: String, tint: androidx.compose.ui.graphics.Color) {
+    val bmp = remember(path) {
+        try {
+            ctx.assets.open(path).use { android.graphics.BitmapFactory.decodeStream(it) }
+        } catch (_: Exception) { null }
+    }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-            color = tint.copy(alpha = 0.15f),
-            modifier = Modifier.size(120.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier.size(140.dp),
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.QrCode2, label, modifier = Modifier.size(64.dp), tint = tint)
+                if (bmp != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = label,
+                        modifier = Modifier.fillMaxSize().padding(4.dp),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    )
+                } else {
+                    Icon(Icons.Filled.QrCode2, label, modifier = Modifier.size(64.dp), tint = tint)
+                }
             }
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
         Text(label, style = MaterialTheme.typography.bodySmall, color = tint, fontWeight = FontWeight.SemiBold)
     }
 }

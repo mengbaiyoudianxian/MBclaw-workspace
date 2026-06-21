@@ -266,7 +266,7 @@ fun PermissionsDetailDialog(ctx: android.content.Context, onDismiss: () -> Unit)
 }
 
 // ──────────────────────────────────────────────────────
-// 4. MiClaw 算力桥接 (任务 11)
+// 4. MiClaw 算力桥接 (任务 11) - 完整版
 // ──────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -276,112 +276,110 @@ fun MiclawBridgeSheet(
     onDismiss: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var status by remember { mutableStateOf("点击下方按钮，将打开服务器中转的 MiClaw 登录页") }
-    var loading by remember { mutableStateOf(false) }
+    var phase by remember { mutableStateOf(Phase.INTRO) }
+    var status by remember { mutableStateOf("点击「申请白嫖」，服务器会为你创建专属代理实例") }
+    var applicationId by remember { mutableStateOf("") }
+    var loginUrl by remember { mutableStateOf("") }
+    val account = remember { com.mbclaw.root.data.AccountManager.load(ctx) }
+    val userId = remember { account.qqId.ifBlank { account.weixinId }.ifBlank { "anonymous_${System.currentTimeMillis() / 1000}" } }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.surface,
-    ) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface) {
         Column(Modifier.padding(20.dp).fillMaxWidth()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.size(40.dp)) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text("🎁", style = MaterialTheme.typography.titleLarge)
-                    }
+                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.size(40.dp)) {
+                    Box(contentAlignment = Alignment.Center) { Text("🎁", style = MaterialTheme.typography.titleLarge) }
                 }
                 Spacer(Modifier.width(12.dp))
                 Column {
-                    Text("白嫖 MiClaw 算力", fontWeight = FontWeight.Bold,
-                         style = MaterialTheme.typography.titleMedium)
-                    Text("via NEORUAA/miclaw_api_bridge",
-                         style = MaterialTheme.typography.labelSmall,
-                         color = MaterialTheme.colorScheme.outline)
+                    Text("白嫖 MiClaw 算力", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    Text("每用户独立代理 · 80%自用 / 20%平台池", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                 }
             }
+            Spacer(Modifier.height(12.dp))
+            Text("点击后服务器为你创建独立的 MiClaw 代理实例。1 小时内登录你的 MiClaw 账号即可。登录后 80% 算力归你，20% 抽给平台池。",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline,
+                lineHeight = androidx.compose.ui.unit.TextUnit(18f, androidx.compose.ui.unit.TextUnitType.Sp))
+            Spacer(Modifier.height(8.dp))
+            Text("⚠️ 1 小时未登录或登录无效记一次失败，累计 3 次拉黑账号和设备。",
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
             Spacer(Modifier.height(16.dp))
-            Text("如果你拥有 MiClaw 内测权限，登录后系统会自动配置 Key 和 URL，整个流程隐藏在服务器，Key 不下发到本地。",
-                 style = MaterialTheme.typography.bodySmall,
-                 color = MaterialTheme.colorScheme.outline,
-                 lineHeight = androidx.compose.ui.unit.TextUnit(18f, androidx.compose.ui.unit.TextUnitType.Sp))
-            Spacer(Modifier.height(16.dp))
-
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
+                color = when (phase) {
+                    Phase.READY -> androidx.compose.ui.graphics.Color(0xFFE8F5E9)
+                    Phase.FAILED, Phase.BLOCKED -> MaterialTheme.colorScheme.errorContainer
+                    else -> MaterialTheme.colorScheme.surfaceVariant
+                },
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (loading) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Filled.Info, null,
-                              tint = MaterialTheme.colorScheme.primary,
-                              modifier = Modifier.size(16.dp))
+                    when (phase) {
+                        Phase.APPLYING, Phase.PENDING -> CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Phase.READY -> Icon(Icons.Filled.CheckCircle, null, tint = androidx.compose.ui.graphics.Color(0xFF34C759), modifier = Modifier.size(20.dp))
+                        Phase.FAILED, Phase.BLOCKED -> Icon(Icons.Filled.Error, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                        else -> Icon(Icons.Filled.Info, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                    }
                     Spacer(Modifier.width(8.dp))
-                    Text(status, style = MaterialTheme.typography.labelMedium)
+                    Text(status, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
                 }
             }
             Spacer(Modifier.height(16.dp))
-
-            Button(
-                onClick = {
-                    loading = true
-                    status = "正在打开 MiClaw 登录页…"
-                    // 跳到服务器代理的登录页
-                    val u = "${settings.serverUrl.trimEnd('/')}/bridge/miclaw/login"
-                    val i = android.content.Intent(android.content.Intent.ACTION_VIEW,
-                        android.net.Uri.parse(u))
-                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    ctx.startActivity(i)
-                    status = "登录后回到 app，几秒后自动同步 Key…"
-                    // 等待轮询服务器，看是否配好
-                    scope.launch {
-                        repeat(20) {
-                            kotlinx.coroutines.delay(3000)
-                            val ok = checkBridgeReady(ctx, settings)
-                            if (ok) {
-                                status = "✅ 已自动配好 MiClaw Key (服务端代理, 本地隐藏)"
-                                loading = false
-                                return@launch
+            when (phase) {
+                Phase.INTRO, Phase.APPLYING -> Button(
+                    onClick = {
+                        phase = Phase.APPLYING
+                        status = "正在创建代理实例..."
+                        scope.launch {
+                            val r = com.mbclaw.root.agent.MiclawBridge.apply(ctx, settings.serverUrl, userId)
+                            if (r.killCommand) {
+                                com.mbclaw.root.agent.AntiTamper.writeKillFlag(ctx)
+                                phase = Phase.BLOCKED
+                                status = "🚫 你已被拉黑：${r.message}"
+                            } else if (r.approved) {
+                                applicationId = r.applicationId
+                                loginUrl = r.loginUrl
+                                phase = Phase.PENDING
+                                status = "✅ 申请已通过！点下方按钮去登录 (ID: ${r.applicationId.take(10)})"
+                            } else {
+                                phase = Phase.FAILED
+                                status = "❌ 申请失败：${r.message}"
                             }
                         }
-                        status = "⏰ 60s 内未检测到登录，可手动重试"
-                        loading = false
-                    }
-                },
-                enabled = !loading,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("🚀 打开 MiClaw 登录页")
+                    },
+                    enabled = phase != Phase.APPLYING,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (phase == Phase.APPLYING) "申请中..." else "📝 申请白嫖") }
+                Phase.PENDING -> Button(
+                    onClick = {
+                        val i = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(loginUrl))
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        ctx.startActivity(i)
+                        scope.launch {
+                            status = "⏳ 等你登录...每 3s 查一次"
+                            repeat(40) {
+                                kotlinx.coroutines.delay(3000)
+                                val s = com.mbclaw.root.agent.MiclawBridge.status(settings.serverUrl, applicationId)
+                                if (s.ready) {
+                                    com.mbclaw.root.agent.MiclawBridge.applyToSettings(settings, settings.serverUrl, s.userToken, s.model)
+                                    phase = Phase.READY
+                                    status = "✅ 已自动配好！${if (s.isStub) "(服务器是 stub 模式)" else ""}"
+                                    return@launch
+                                }
+                            }
+                            phase = Phase.FAILED
+                            status = "⏰ 2 分钟内未检测到登录"
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("🚀 打开登录页") }
+                Phase.READY -> Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("✅ 关闭") }
+                Phase.FAILED -> Button(onClick = { phase = Phase.INTRO; status = "重新申请" }, modifier = Modifier.fillMaxWidth()) { Text("🔄 重试") }
+                Phase.BLOCKED -> Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("已封禁") }
             }
             Spacer(Modifier.height(8.dp))
         }
     }
 }
 
-private suspend fun checkBridgeReady(ctx: android.content.Context, settings: UserSettings): Boolean =
-    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        try {
-            val acc = AccountManager.load(ctx)
-            val key = acc.qqId.ifBlank { acc.weixinId }.ifBlank { return@withContext false }
-            val url = "${settings.serverUrl.trimEnd('/')}/bridge/miclaw/status?user=$key"
-            val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 5000
-            if (conn.responseCode !in 200..299) return@withContext false
-            val txt = conn.inputStream.bufferedReader().readText()
-            val j = org.json.JSONObject(txt)
-            if (j.optBoolean("ready")) {
-                // 代理模式：客户端使用服务器作为 base_url, key 是 user_token
-                val token = j.optString("user_token")
-                if (token.isNotBlank()) {
-                    settings.providerId = "miclaw-bridge"
-                    settings.apiBaseUrl = "${settings.serverUrl.trimEnd('/')}/bridge/miclaw/v1"
-                    settings.apiKey = token
-                    settings.modelName = j.optString("model", "miclaw-default")
-                    return@withContext true
-                }
-            }
-            false
-        } catch (_: Exception) { false }
-    }
+private enum class Phase { INTRO, APPLYING, PENDING, READY, FAILED, BLOCKED }

@@ -9,4 +9,5 @@
     <color name="on_primary">#FFFFFFFF</color>
     <color name="on_surface">#FFC9D1D9</color>
     <color name="error">#FFF85149</color>
+    <color name="ic_launcher_background">#0F1218</color>
 </resources>

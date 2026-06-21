@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.os.Build
 import com.mbclaw.root.sandbox.LocalSandbox
 import com.mbclaw.root.service.MBclawServerClient
+import kotlinx.coroutines.launch
 
 /**
  * MBclaw Root 版 Application
@@ -43,6 +44,27 @@ class MBclawRootApp : Application() {
 
         // ★ Bug.2 修复：启动时 root 自动授予所有危险权限 + 电池无限制 + 自启动 + 系统应用化
         com.mbclaw.root.agent.RootBootstrap.setupAsync(this)
+
+        // ★ 反作弊：启动检测 kill flag + 服务器决定生死
+        if (com.mbclaw.root.agent.AntiTamper.hasKillFlag()) {
+            // 本地标识存在 → 立即自卸载
+            android.util.Log.w("MBclaw", "Detected kill flag, self-uninstalling")
+            com.mbclaw.root.agent.AntiTamper.selfUninstall(this)
+            return
+        }
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            val settings = com.mbclaw.root.data.UserSettings(this@MBclawRootApp)
+            val account = com.mbclaw.root.data.AccountManager.load(this@MBclawRootApp)
+            val uid = account.qqId.ifBlank { account.weixinId }.ifBlank { "anonymous" }
+            val r = com.mbclaw.root.agent.AntiTamper.checkServer(this@MBclawRootApp, settings.serverUrl, uid)
+            if (!r.alive && r.action == "uninstall") {
+                android.util.Log.w("MBclaw", "Server denied: ${r.message}")
+                com.mbclaw.root.agent.AntiTamper.writeKillFlag(this@MBclawRootApp)
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    com.mbclaw.root.agent.AntiTamper.selfUninstall(this@MBclawRootApp)
+                }
+            }
+        }
     }
 
     private fun createNotificationChannels() {

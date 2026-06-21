@@ -10,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -84,7 +85,11 @@ fun SettingsPage(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // ─── 顶部渐变头卡 ───
+            // ─── 顶部渐变头卡 (使用真实 LOGO) ───
+            val logoBmp = remember {
+                try { ctx.assets.open("donate/logo.png").use { android.graphics.BitmapFactory.decodeStream(it) } }
+                catch (_: Exception) { null }
+            }
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.fillMaxWidth(),
@@ -92,26 +97,34 @@ fun SettingsPage(
                 Box(
                     Modifier.background(
                         Brush.linearGradient(listOf(
-                            Color(0xFFFFE9D6),
-                            Color(0xFFFFF4EC),
+                            Color(0xFFE9F1FB),
+                            Color(0xFFF7FAFE),
                         ))
                     ).padding(vertical = 28.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Surface(shape = RoundedCornerShape(50),
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(56.dp)) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text("M", fontWeight = FontWeight.Bold,
-                                     color = Color.White,
-                                     style = MaterialTheme.typography.headlineMedium)
+                        if (logoBmp != null) {
+                            androidx.compose.foundation.Image(
+                                bitmap = logoBmp.asImageBitmap(),
+                                contentDescription = "MBclaw",
+                                modifier = Modifier.size(64.dp),
+                            )
+                        } else {
+                            Surface(shape = RoundedCornerShape(50),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(56.dp)) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text("M", fontWeight = FontWeight.Bold,
+                                         color = Color.White,
+                                         style = MaterialTheme.typography.headlineMedium)
+                                }
                             }
                         }
                         Spacer(Modifier.height(10.dp))
                         Text("MBclaw", fontWeight = FontWeight.SemiBold,
                              style = MaterialTheme.typography.titleMedium,
-                             color = Color(0xFF1C1C1E))
+                             color = Color(0xFF1A2434))
                     }
                 }
             }
