@@ -3,31 +3,52 @@ package com.mbclaw.root.ui.theme
 import androidx.compose.ui.graphics.Color
 
 // ─────────────────────────────────────────────────
-// MBclaw 调色 — 仿 MiClaw / 小米 HyperOS
-// 重点修正：MiClaw 用户气泡是浅蓝，AI 气泡是浅灰白
-//          主色保留小米橙，但只用在 logo / 按钮，不入气泡
+// MBclaw v3.8 调色
+//
+// 浅色 (默认): 白 + 天蓝
+//   • 背景 #F7FAFE 略带蓝调的白
+//   • 卡片纯白 (FFFFFF)
+//   • 主色天蓝 #4A90E2
+//   • 用户气泡 浅天蓝 #E3F1FF
+//   • AI 气泡 浅灰白 #F2F4F8
+//
+// 暗色: 深蓝 + 流动曲线
+//   • 背景深蓝 #0A1428 (午夜蓝)
+//   • 卡片 #142037
+//   • 二级表面 #1C2B47
+//   • 主色亮蓝 #5EA8FF
+//   • 用户气泡 深蓝 #1E3A5F
+//   • AI 气泡 深灰蓝 #1C2B47
+//   • 装饰用流动曲线 (背景层)
 // ─────────────────────────────────────────────────
 
-// 品牌色
-val MBclawOrange = Color(0xFFFF6900)
-val MBclawBlue   = Color(0xFFD8E5FF)   // 浅蓝（用户气泡底，从截图取色）
-val MBclawBlueT  = Color(0xFF1A1A1E)   // 用户气泡文本
-val MBclawGreen  = Color(0xFF34C759)
-val MBclawRed    = Color(0xFFFF3B30)
-val MBclawPurple = Color(0xFFAF52DE)
+// 品牌色 (跨主题)
+val MBclawSkyBlue   = Color(0xFF4A90E2)        // 浅色主色 — 天蓝
+val MBclawAzure     = Color(0xFF5EA8FF)        // 暗色主色 — 亮蓝
+val MBclawAccent    = Color(0xFFFF8A3D)        // 强调色 — 暖橙 (用在按钮 hover/danger 才用)
+val MBclawGreen     = Color(0xFF34C759)
+val MBclawRed       = Color(0xFFFF3B30)
 
-// 浅色（默认）— 仿 MiClaw 截图
-val LightBackground = Color(0xFFF5F5F7)   // 全局浅灰底（介于卡片白和墙底之间）
-val LightSurface    = Color(0xFFFFFFFF)   // 卡片白
-val LightSurfaceVar = Color(0xFFF0F0F2)   // AI 气泡底
-val LightBorder     = Color(0xFFE0E0E5)
-val LightText       = Color(0xFF1C1C1E)   // 主标题
-val LightTextMuted  = Color(0xFF8E8E93)   // 副标题
+// ──── 浅色 ────────────────────────────────────────
+val LightBackground    = Color(0xFFF7FAFE)     // 全局底 — 微蓝白
+val LightSurface       = Color(0xFFFFFFFF)     // 卡片纯白
+val LightSurfaceVar    = Color(0xFFF2F4F8)     // 二级卡片 / AI 气泡
+val LightSurfaceTint   = Color(0xFFE9F1FB)     // 三级 (浅天蓝)
+val LightBorder        = Color(0xFFE0E6F0)
+val LightText          = Color(0xFF1A2434)     // 主文字 (深蓝灰)
+val LightTextMuted     = Color(0xFF6B7785)     // 副文字
+val LightUserBubble    = Color(0xFFE3F1FF)     // 用户气泡
 
-// 暗色 (备用)
-val DarkBackground     = Color(0xFF0F0F12)
-val DarkSurface        = Color(0xFF1A1A1F)
-val DarkSurfaceVariant = Color(0xFF24242B)
-val DarkBorder         = Color(0xFF2E2E36)
-val DarkText           = Color(0xFFF5F5F7)
-val DarkTextMuted      = Color(0xFFB8B8C0)   // bug.3 加深副标题，提高对比
+// ──── 暗色 (深蓝海洋) ─────────────────────────────
+val DarkBackground     = Color(0xFF0A1428)     // 深午夜蓝
+val DarkSurface        = Color(0xFF142037)     // 卡片
+val DarkSurfaceVariant = Color(0xFF1C2B47)     // 二级卡片 / AI 气泡
+val DarkSurfaceTint    = Color(0xFF243859)     // 三级
+val DarkBorder         = Color(0xFF2C3E60)
+val DarkText           = Color(0xFFEAEEF5)
+val DarkTextMuted      = Color(0xFFA8B2C3)     // 加深，提高对比
+val DarkUserBubble     = Color(0xFF1E3A5F)
+
+// 流动曲线 (暗色背景装饰用 - 半透明蓝)
+val DarkFlow1          = Color(0x405EA8FF)
+val DarkFlow2          = Color(0x20FFFFFF)

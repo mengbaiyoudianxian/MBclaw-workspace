@@ -42,6 +42,7 @@ fun SettingsPage(
     onSetupProvider: () -> Unit,
     onOpenHand: () -> Unit,
     onOpenTools: () -> Unit,
+    onOpenSessions: () -> Unit = {},        // 任务 7
 ) {
     val ctx = LocalContext.current
     val s = agent.settings
@@ -50,12 +51,17 @@ fun SettingsPage(
     var url by remember { mutableStateOf(s.serverUrl) }
     var showTokens by remember { mutableStateOf(false) }
     var showClearConfirm by remember { mutableStateOf(false) }
+    var showPermissionsPage by remember { mutableStateOf(false) }    // 任务 5
+    var showAccountSheet by remember { mutableStateOf(false) }       // 任务 8
+    var showMiclawSheet by remember { mutableStateOf(false) }        // 任务 11
     val tier = remember { PermissionTier.get(ctx) }
     val (granted, total) = remember { RootBootstrap.status(ctx) }
     val vaultCount = remember { SecureVault.count(ctx) }
     val backupCount = remember {
         SafeOps.listBackups("apps").size + SafeOps.listBackups("files").size
     }
+    // 任务 8: 读 QQ/微信账号信息
+    val account = remember { com.mbclaw.root.data.AccountManager.load(ctx) }
 
     Scaffold(
         topBar = {
@@ -112,21 +118,29 @@ fun SettingsPage(
 
             // ─── 组 1: 账号 & 设备 ───
             SettingGroup {
-                SettingItemRow("我的账号", subtitle = "手机主人") {}
+                // 任务 8: 我的账号 → 弹出账号面板
+                SettingItemRow(
+                    "我的账号",
+                    subtitle = account.displayName(),
+                    leading = { com.mbclaw.root.ui.screens.AccountAvatar(account, size = 40) },
+                    onClick = { showAccountSheet = true },
+                )
                 SettingDivider()
-                SettingItemRow("当前会话",
-                    subtitle = "${try { agent.db.getSessions().size } catch (_: Exception) { 0 }} 段历史会话") {}
+                // 任务 7: 当前会话点击 → 全部会话搜索浮层
+                SettingItemRow(
+                    "当前会话",
+                    subtitle = "${try { agent.db.getSessions().size } catch (_: Exception) { 0 }} 段历史 · 点击查看全部",
+                    onClick = onOpenSessions,
+                )
                 SettingDivider()
-                SettingItemRow("权限状态",
+                // 任务 5: 权限状态点击 → 详细页
+                SettingItemRow(
+                    "权限状态",
                     subtitle = "$granted / $total 已授予 · " +
                               (if (tier.hasRoot) "ROOT ✅" else "无 Root") +
                               " · " + (if (tier.hasAccessibility) "无障碍 ✅" else "无障碍 ❌"),
-                    trailing = {
-                        TextButton(onClick = { RootBootstrap.resetAndRerun(ctx) }) {
-                            Text("重新获取", style = MaterialTheme.typography.labelMedium)
-                        }
-                    }
-                ) {}
+                    onClick = { showPermissionsPage = true },
+                )
             }
 
             SectionTitle("模型与工具")
@@ -141,13 +155,20 @@ fun SettingsPage(
                 SettingDivider()
                 SettingItemRow(
                     "工具市场",
-                    subtitle = "${com.mbclaw.root.agent.ToolRegistry.ALL.size} 个工具",
+                    subtitle = "${com.mbclaw.root.agent.ToolRegistry.ALL.size} 个工具 · 添加 / 上传 / 下载",
                     onClick = onOpenTools,
+                )
+                SettingDivider()
+                // 任务 11: 白嫖 miclaw 算力
+                SettingItemRow(
+                    "🎁 白嫖 MiClaw 算力",
+                    subtitle = "通过 NEORUAA bridge 中转 · 服务器隐藏 Key",
+                    onClick = { showMiclawSheet = true },
                 )
                 SettingDivider()
                 SettingItemRow(
                     "智能手 (Agent Hand)",
-                    subtitle = "屏幕区块识别 · 手动操作演示",
+                    subtitle = "看得见点得准 · 校准 / 区块识别 / 模糊点击",
                     onClick = onOpenHand,
                 )
             }
@@ -280,7 +301,6 @@ fun SettingsPage(
                         agent.db.writableDatabase.execSQL("DELETE FROM messages")
                         agent.db.writableDatabase.execSQL("DELETE FROM sessions")
                         showClearConfirm = false
-                        // 重启会话
                         ChatViewModel.get(ctx, agent).newSession()
                         android.widget.Toast.makeText(ctx, "已清除所有历史",
                             android.widget.Toast.LENGTH_SHORT).show()
@@ -293,6 +313,16 @@ fun SettingsPage(
                 TextButton(onClick = { showClearConfirm = false }) { Text("取消") }
             }
         )
+    }
+
+    if (showPermissionsPage) {
+        PermissionsDetailDialog(ctx = ctx, onDismiss = { showPermissionsPage = false })
+    }
+    if (showAccountSheet) {
+        AccountSheet(ctx = ctx, onDismiss = { showAccountSheet = false })
+    }
+    if (showMiclawSheet) {
+        MiclawBridgeSheet(ctx = ctx, settings = s, onDismiss = { showMiclawSheet = false })
     }
 }
 
@@ -323,6 +353,7 @@ private fun SettingItemRow(
     title: String,
     subtitle: String? = null,
     danger: Boolean = false,
+    leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
     onClick: (() -> Unit)? = null,
 ) {
@@ -333,6 +364,10 @@ private fun SettingItemRow(
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (leading != null) {
+            leading()
+            Spacer(Modifier.width(12.dp))
+        }
         Column(Modifier.weight(1f)) {
             Text(
                 title,

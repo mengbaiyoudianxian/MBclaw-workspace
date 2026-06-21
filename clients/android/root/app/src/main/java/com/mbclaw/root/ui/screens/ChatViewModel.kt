@@ -39,29 +39,38 @@ class ChatViewModel private constructor(private val ctx: Context, val agent: MBc
             }
     }
 
-    /** 幂等：首次调用从 DB 恢复最后会话；后续调用直接返回 */
+    /** 启动恢复：
+     *  - 检测 DB 中会话数 >= 1 → 强制读取最近一条 sessionId, 加载其消息
+     *  - 否则才创建新对话
+     *  - 启动时无论 initialized 是否为 true 都重新跑（防止单例残留旧状态）
+     */
     fun initIfNeeded() {
-        if (initialized) return
+        if (initialized && messages.isNotEmpty()) return
         synchronized(this) {
-            if (initialized) return
             initialized = true
         }
         scope.launch(Dispatchers.IO) {
             agent.initSession()
-            val prevSid = agent.db.getLastSessionId()
-            if (prevSid != null) {
-                sessionId.value = prevSid
-                val rows = agent.db.getMessages(prevSid)
+            val sessions = try { agent.db.getSessions() } catch (_: Exception) { emptyList() }
+            android.util.Log.i("MBclaw-VM", "initIfNeeded: ${sessions.size} sessions in DB")
+            if (sessions.isNotEmpty()) {
+                // 用 getSessions() 替代 getLastSessionId()，后者可能返回 null 即使 DB 有数据
+                val newest = sessions.first()  // getSessions 按 updated_at DESC
+                val rows = agent.db.getMessages(newest.id)
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    sessionId.value = newest.id
+                    messages.clear()
                     rows.forEach { messages.add(ChatMsg(it.role, it.content)) }
-                    if (messages.isEmpty()) {
-                        messages.add(welcomeMsg())
-                    }
+                    if (messages.isEmpty()) messages.add(welcomeMsg())
+                    android.util.Log.i("MBclaw-VM", "已恢复 session=${newest.id}, ${rows.size} messages")
                 }
             } else {
-                sessionId.value = agent.db.createSession("新对话")
+                val sid = agent.db.createSession("新对话")
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    sessionId.value = sid
+                    messages.clear()
                     messages.add(welcomeMsg())
+                    android.util.Log.i("MBclaw-VM", "首次启动, 新建 session=$sid")
                 }
             }
         }

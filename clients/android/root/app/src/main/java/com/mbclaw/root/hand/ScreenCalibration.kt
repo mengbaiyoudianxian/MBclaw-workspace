@@ -104,6 +104,23 @@ class ScreenCalibration(private val context: Context) {
         return prefs.getBoolean("calib_verified", false)
     }
 
+    /** 重置标定 */
+    fun reset() {
+        prefs.edit().clear().apply()
+    }
+
+    /** 快速标定 — 假设屏幕没有偏移（1:1 映射），仅记录屏幕物理尺寸
+     *  适合大多数没有挖孔/曲屏的设备
+     */
+    fun quickCalibrate(physicalW: Int, physicalH: Int) {
+        // displayPoints 默认就是网格化的 0-1000 范围，物理也按 physicalW/physicalH 比例缩放
+        // scale = physicalW / 1000, offset = 0
+        val sx = physicalW / 1000f
+        val sy = physicalH / 1000f
+        saveData(CalibrationData(sx, sy, 0f, 0f))
+        verify(true)
+    }
+
     // ── 自动微调 ──
 
     /** 记录一次偏移，积累数据后自动修正 */

@@ -130,6 +130,90 @@ fun AgentHandScreen(onBack: () -> Unit) {
                     }
                 }
             }
+
+            // ── 测试 ──
+            var testTarget by remember { mutableStateOf("发送") }
+            var testResult by remember { mutableStateOf("") }
+            var testing by remember { mutableStateOf(false) }
+            Card {
+                Column(Modifier.padding(16.dp)) {
+                    Text("🧪 试一下", fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    Text("智能手需要截图作为输入，通常由 Agent 内部调用。\n这里仅测试关键词命中（模糊点击通道）。",
+                         style = MaterialTheme.typography.labelSmall,
+                         color = MaterialTheme.colorScheme.outline)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = testTarget, onValueChange = { testTarget = it },
+                        label = { Text("目标 (如: 发送 / 确定 / 关闭)") },
+                        modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            testing = true
+                            scope.launch {
+                                try {
+                                    val fuzzy = com.mbclaw.root.hand.FuzzyClicker()
+                                    val hit = fuzzy.matchKeyword(testTarget)
+                                    testResult = if (hit != null)
+                                        "✅ 关键词命中: ${hit.keyword} (置信度 ${"%.0f".format(hit.confidence * 100)}%, 方法 ${hit.method}) — 会走快速路径"
+                                    else
+                                        "△ 关键词未命中，将走完整粗筛+精定位流程 (需要截图)"
+                                } catch (e: Exception) {
+                                    testResult = "失败: ${e.message}"
+                                }
+                                testing = false
+                            }
+                        },
+                        enabled = !testing,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(if (testing) "检测中..." else "🎯 检测关键词命中") }
+                    if (testResult.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(testResult, style = MaterialTheme.typography.bodySmall,
+                             color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+
+            // ── 标定 ──
+            Card {
+                Column(Modifier.padding(16.dp)) {
+                    Text("📐 屏幕标定", fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(4.dp))
+                    Text(if (isCalibrated) "✅ 已标定，可日常使用" else "⚠️ 未标定 — 推荐进行四角校准提高精度",
+                         style = MaterialTheme.typography.bodySmall,
+                         color = MaterialTheme.colorScheme.outline)
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    hand.calibration.reset()
+                                    isCalibrated = false
+                                    android.widget.Toast.makeText(context, "已重置标定",
+                                        android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("重置") }
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    // 简化版：用屏幕中心点+物理像素直接生成校准
+                                    val dm = context.resources.displayMetrics
+                                    hand.calibration.quickCalibrate(dm.widthPixels, dm.heightPixels)
+                                    isCalibrated = true
+                                    android.widget.Toast.makeText(context, "✅ 快速标定完成",
+                                        android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("⚡ 快速标定") }
+                    }
+                }
+            }
         }
     }
 }

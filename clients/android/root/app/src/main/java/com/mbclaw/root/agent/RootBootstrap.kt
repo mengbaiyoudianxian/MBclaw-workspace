@@ -32,8 +32,8 @@ object RootBootstrap {
     private const val K_DONE = "setup_done_v3"
     private const val K_LAST_ATTEMPT = "last_attempt"
 
-    /** 要授予的危险权限清单 */
-    private val DANGEROUS = listOf(
+    /** 要授予的危险权限清单 (公开以供权限详情页读取) */
+    val DANGEROUS = listOf(
         // 存储 / 媒体
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
@@ -129,9 +129,11 @@ object RootBootstrap {
 
             var granted = 0
             var failed = 0
-            // 1. 批量 pm grant (用一个 root shell 一次性跑完，省启动 su 的开销)
+            // 1. 批量 pm grant — 跳过用户在权限页设为「以后全部禁止」的权限
+            val grantable = PermissionPolicy.filterGrantable(context, DANGEROUS)
+            Log.i(TAG, "应授予 ${grantable.size}/${DANGEROUS.size} (其余被禁止)")
             val sb = StringBuilder()
-            DANGEROUS.forEach { perm -> sb.appendLine("pm grant $pkg $perm 2>/dev/null && echo G:$perm || echo F:$perm") }
+            grantable.forEach { perm -> sb.appendLine("pm grant $pkg $perm 2>/dev/null && echo G:$perm || echo F:$perm") }
             val out = tier.shellRoot(sb.toString(), timeoutMs = 30_000) ?: ""
             out.lines().forEach { ln ->
                 if (ln.startsWith("G:")) granted++ else if (ln.startsWith("F:")) failed++
