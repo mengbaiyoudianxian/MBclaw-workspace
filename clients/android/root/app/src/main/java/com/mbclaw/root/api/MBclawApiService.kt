@@ -39,3 +39,46 @@ interface MBclawApiService {
         @Query("project_id") projectId: Int,
     ): Response<AgentResponse>
 }
+
+
+    // ── 工具系统 (R0-ext) ──
+
+    @GET("/tools")
+    suspend fun listTools(
+        @Query("category") category: String? = null,
+    ): Response<List<ToolInfo>>
+
+    @GET("/tools/search")
+    suspend fun searchTools(
+        @Query("q") query: String,
+    ): Response<List<ToolInfo>>
+
+    @POST("/tools/execute")
+    suspend fun executeTool(
+        @Body payload: ToolExecuteRequest,
+    ): Response<ToolExecuteResponse>
+
+    @GET("/agent/run")
+    suspend fun agentRun(
+        @Query("project_id") projectId: Int? = null,
+        @Body payload: AgentRequest,
+    ): Response<AgentResponse>
+
+    data class ToolInfo(
+        val id: Int,
+        val name: String,
+        val category: String,
+        val summary: String,
+        val tags: List<String>,
+        val usage_count: Int
+    )
+
+    data class ToolExecuteRequest(
+        val name: String,
+        val content: String
+    )
+
+    data class ToolExecuteResponse(
+        val name: String,
+        val result: String
+    )
