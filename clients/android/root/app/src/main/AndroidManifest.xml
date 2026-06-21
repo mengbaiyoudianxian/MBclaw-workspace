@@ -176,4 +176,12 @@
         </provider>
 
     </application>
+
+    <!-- Xiaomi/MIUI 系统级权限 -->
+    <uses-permission android:name="miui.permission.USE_INTERNAL_GENERAL_API"/>
+    <uses-permission android:name="com.miui.securitycenter.permission.SYSTEM_PERMISSION_DECLARE"/>
+    <uses-permission android:name="com.xiaomi.permission.ACCESS_ACCOUNTS"/>
+    <uses-permission android:name="com.xiaomi.permission.AUTH_SERVICE"/>
+    <uses-permission android:name="com.xiaomi.permission.CLOUD_MANAGER"/>
+    <uses-permission android:name="com.xiaomi.permission.ACCESS_SECURITY_DEVICE_CREDENTIAL"/>
 </manifest>

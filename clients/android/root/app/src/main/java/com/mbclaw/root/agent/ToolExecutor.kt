@@ -16,6 +16,7 @@ import com.mbclaw.root.data.UserSettings
 import com.mbclaw.root.hermes.RealEngine
 import com.mbclaw.root.service.MBclawAccessibilityService
 import com.mbclaw.root.service.ShizukuManager
+import com.mbclaw.root.service.XiaomiApi
 import org.json.JSONObject
 import kotlinx.coroutines.*
 
@@ -34,7 +35,18 @@ class ToolExecutor(
     private val shizuku = ShizukuManager(context)
     // Root 检测: 系统API > Root > Shizuku > 无障碍
     private val hasRoot: Boolean by lazy {
-        try { Runtime.getRuntime().exec(arrayOf("su","-c","id")).waitFor() == 0 } catch (_:Exception) { false }
+        try {
+            // 方法1: 直接执行 su
+            val p1 = Runtime.getRuntime().exec(arrayOf("su","-c","echo root_ok"))
+            val out1 = p1.inputStream.bufferedReader().readText()
+            p1.waitFor()
+            if (out1.contains("root_ok")) return@lazy true
+            // 方法2: 检查 Magisk
+            val p2 = Runtime.getRuntime().exec(arrayOf("sh","-c","which su || ls /sbin/su || ls /system/xbin/su 2>/dev/null"))
+            val out2 = p2.inputStream.bufferedReader().readText()
+            p2.waitFor()
+            out2.isNotBlank()
+        } catch (_:Exception) { false }
     }
     private fun execRoot(cmd: String): String? = try {
         val p = Runtime.getRuntime().exec(arrayOf("su","-c",cmd)); p.waitFor()
@@ -79,13 +91,13 @@ class ToolExecutor(
                 // ═══ 设备控制 — 系统SDK直调 ═══
                 "toggle_wifi" -> {
                     val enable = args.optBoolean("enable")
-                    if (hasRoot) { execRoot("svc wifi ${if (enable) "enable" else "disable"}"); "WiFi已${if (enable) "打开" else "关闭"} (Root)" }
+                    if (hasRoot) { XiaomiApi.setWifi(enable); execRoot("svc wifi ${if (enable) "enable" else "disable"}"); "WiFi已${if (enable) "打开" else "关闭"} (Root)" }
                     else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) { systemAmStart(Settings.Panel.ACTION_WIFI); "WiFi面板已打开" }
                     else { try { wifiManager?.isWifiEnabled = enable; "WiFi已${if (enable) "打开" else "关闭"}" } catch (_:Exception) { "需Root" } }
                 }
                 "toggle_bluetooth" -> {
                     val enable = args.optBoolean("enable")
-                    if (hasRoot) { execRoot("service call bluetooth_manager ${if (enable) "6" else "8"}"); "蓝牙已${if (enable) "打开" else "关闭"} (Root)" }
+                    if (hasRoot) { XiaomiApi.setBluetooth(enable); execRoot("service call bluetooth_manager ${if (enable) "6" else "8"}"); "蓝牙已${if (enable) "打开" else "关闭"} (Root)" }
                     else if (enable) bluetoothAdapter?.enable() else bluetoothAdapter?.disable()
                     "蓝牙 ${if (enable) "正在打开" else "正在关闭"}"
                 }
@@ -258,6 +270,11 @@ class ToolExecutor(
                         .take(10).joinToString("\n") { "  ${it.packageName}" }
                         .let { "已安装($filter):\n$it" }
                 }
+                "read_file" -> {
+                    val path = args.optString("path")
+                    if (hasRoot) { execRoot("cat $path") ?: "文件不存在或无法读取" }
+                    else { try { java.io.File(path).readText().take(3000) } catch (_:Exception) { "需Root权限读取系统文件" } }
+                }
                 "uninstall_app" -> {
                     systemAmStart(Intent.ACTION_DELETE, "package:${args.optString("package_name")}")
                     "卸载界面已打开"
@@ -280,7 +297,7 @@ class ToolExecutor(
                 }
 
                 // ═══ 系统信息 ═══
-                "get_system_info" -> "设备: ${Build.MODEL} | Android ${Build.VERSION.RELEASE} | SDK ${Build.VERSION.SDK_INT} | Shizuku: ${if (shizuku.isReady()) "✅" else "❌"}"
+                "get_system_info" -> XiaomiApi.getDeviceInfo()
                 "get_clipboard" -> {
                     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                     cm.primaryClip?.getItemAt(0)?.text?.toString() ?: "剪贴板为空"
