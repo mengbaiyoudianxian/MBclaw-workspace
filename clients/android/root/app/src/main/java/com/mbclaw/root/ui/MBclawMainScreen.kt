@@ -411,6 +411,13 @@ private fun AboutDialog(ctx: android.content.Context, onDismiss: () -> Unit) {
                     android.widget.Toast.makeText(ctx, "已复制 QQ：1973054239",
                         android.widget.Toast.LENGTH_SHORT).show()
                 }
+                // 酷安主页
+                AboutRow("酷安", "coolapk.com/u/26771405 · 关注作者") {
+                    val i = android.content.Intent(android.content.Intent.ACTION_VIEW,
+                        android.net.Uri.parse("https://www.coolapk.com/u/26771405"))
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    ctx.startActivity(i)
+                }
                 // 任务 10: 友情赞助
                 AboutRow("💖 友情赞助", "请作者喝杯咖啡") { showQrSheet = true }
             }

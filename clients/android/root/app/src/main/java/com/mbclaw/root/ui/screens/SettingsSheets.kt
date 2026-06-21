@@ -290,18 +290,27 @@ fun MiclawBridgeSheet(
                     Box(contentAlignment = Alignment.Center) { Text("🎁", style = MaterialTheme.typography.titleLarge) }
                 }
                 Spacer(Modifier.width(12.dp))
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text("白嫖 MiClaw 算力", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                    Text("每用户独立代理 · 80%自用 / 20%平台池", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    Text("作者前期赞助 · 自助登录即可使用", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                 }
+                // 白嫖教程入口
+                TextButton(onClick = {
+                    val i = android.content.Intent(
+                        android.content.Intent.ACTION_VIEW,
+                        android.net.Uri.parse("https://www.coolapk.com/feed/72466254?s=ZTk0ZjQ5NDMxOTg3ZmNkZzZhMzg2OGE0ega1622")
+                    ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    ctx.startActivity(i)
+                }) { Text("白嫖教程 ›", style = MaterialTheme.typography.labelMedium) }
             }
             Spacer(Modifier.height(12.dp))
-            Text("点击后服务器为你创建独立的 MiClaw 代理实例。1 小时内登录你的 MiClaw 账号即可。登录后 80% 算力归你，20% 抽给平台池。",
+            Text("点击下方按钮，服务器会为你接入 MiClaw 算力。前期作者免费给几位试试，后续可能考虑收费，因为服务器费用高、消耗大。",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline,
                 lineHeight = androidx.compose.ui.unit.TextUnit(18f, androidx.compose.ui.unit.TextUnitType.Sp))
             Spacer(Modifier.height(8.dp))
-            Text("⚠️ 1 小时未登录或登录无效记一次失败，累计 3 次拉黑账号和设备。",
-                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+            Text("如果你需要 MiClaw 内测教程, 点上方「白嫖教程」",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.height(16.dp))
             Surface(
                 shape = RoundedCornerShape(12.dp),

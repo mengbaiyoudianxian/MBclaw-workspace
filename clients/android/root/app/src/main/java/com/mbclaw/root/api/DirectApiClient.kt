@@ -80,6 +80,7 @@ object DirectApiClient {
         apiKey: String,
         model: String,
         messages: List<ChatMessage>,
+        utopiaEnabled: Boolean = false,
     ): String = withContext(Dispatchers.IO) {
         val url = "${baseUrl.trimEnd('/')}/chat/completions"
         val body = ChatCompletionRequest(
@@ -92,6 +93,7 @@ object DirectApiClient {
             .url(url)
             .addHeader("Authorization", "Bearer $apiKey")
             .addHeader("Content-Type", "application/json")
+            .addHeader("X-Utopia", if (utopiaEnabled) "1" else "0")
             .post(json.toRequestBody("application/json".toMediaType()))
             .build()
 

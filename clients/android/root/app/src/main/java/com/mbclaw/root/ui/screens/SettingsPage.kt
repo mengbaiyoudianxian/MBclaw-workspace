@@ -261,11 +261,11 @@ fun SettingsPage(
                 ) {}
                 SettingDivider()
                 SettingItemRow(
-                    "GitHub",
-                    subtitle = "github.com/mengbaiyoudianxian",
+                    "酷安",
+                    subtitle = "coolapk.com/u/26771405 · 关注作者",
                     onClick = {
                         val i = android.content.Intent(android.content.Intent.ACTION_VIEW,
-                            android.net.Uri.parse("https://github.com/mengbaiyoudianxian"))
+                            android.net.Uri.parse("https://www.coolapk.com/u/26771405"))
                             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                         ctx.startActivity(i)
                     }
@@ -279,21 +279,45 @@ fun SettingsPage(
     if (showTokens) {
         AlertDialog(
             onDismissRequest = { showTokens = false },
+            icon = { Icon(Icons.Filled.Analytics, null) },
             title = { Text("Token 消耗统计") },
             text = {
                 Column {
-                    Text("本次会话累计", fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(8.dp))
-                    // Token 数据由 ChatViewModel 持有；这里访问全局单例
                     val vm = ChatViewModel.get(ctx, agent)
                     val st = vm.tokenStats.value
-                    Text("• 输入 token: ${st.sessionTokensIn}", style = MaterialTheme.typography.bodyMedium)
-                    Text("• 输出 token: ${st.sessionTokensOut}", style = MaterialTheme.typography.bodyMedium)
-                    Text("• 上一轮:    ↑${st.lastTurnIn}  ↓${st.lastTurnOut}",
+                    val totalIn = st.sessionTokensIn
+                    val totalOut = st.sessionTokensOut
+                    val total = totalIn + totalOut
+
+                    Text("📊 本次会话累计", fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    Text("• 输入 token: $totalIn", style = MaterialTheme.typography.bodyMedium)
+                    Text("• 输出 token: $totalOut", style = MaterialTheme.typography.bodyMedium)
+                    Text("• 上一轮: ↑${st.lastTurnIn}  ↓${st.lastTurnOut}",
                          style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(14.dp))
+                    HorizontalDivider()
+                    Spacer(Modifier.height(14.dp))
+
+                    // 乌托邦状态
+                    if (s.utopiaEnabled) {
+                        Text("🌍 乌托邦已开启", fontWeight = FontWeight.SemiBold,
+                             color = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.height(6.dp))
+                        Text("感谢你参与！你的非隐私数据会帮助优化所有人的 AI 体验。",
+                             style = MaterialTheme.typography.bodyMedium,
+                             color = MaterialTheme.colorScheme.outline)
+                    } else {
+                        Text("🔒 乌托邦未开启", fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(6.dp))
+                        Text("在「我的 → 乌托邦计划」开启可解锁完整能力。",
+                             style = MaterialTheme.typography.bodyMedium,
+                             color = MaterialTheme.colorScheme.outline)
+                    }
+
                     Spacer(Modifier.height(10.dp))
-                    Text("更细粒度的统计 (按日 / provider / 工具)\n会在下个版本接入服务端面板",
-                         style = MaterialTheme.typography.bodySmall,
+                    Text("详细统计请查看服务端管理面板:\n${s.serverUrl}/admin",
+                         style = MaterialTheme.typography.labelSmall,
                          color = MaterialTheme.colorScheme.outline)
                 }
             },

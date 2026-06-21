@@ -190,9 +190,14 @@ class AgentLoop(
         }
         body.put("messages", msgsArr)
 
+        // X-Utopia: 让服务端知道是否对此用户做算力分账
+        //   1 = 用户开了乌托邦, 服务端可以在他自己的实例上抽 20% 给平台池
+        //   0 = 用户独享, 平台不抽
+        // 仅在 base_url 指向 miclaw-bridge 时有意义, 但加上无副作用
         val request = Request.Builder().url(url)
             .addHeader("Authorization", "Bearer ${settings.apiKey}")
             .addHeader("Content-Type", "application/json")
+            .addHeader("X-Utopia", if (settings.utopiaEnabled) "1" else "0")
             .post(body.toString().toRequestBody("application/json".toMediaType())).build()
 
         val response = http.newCall(request).execute()
