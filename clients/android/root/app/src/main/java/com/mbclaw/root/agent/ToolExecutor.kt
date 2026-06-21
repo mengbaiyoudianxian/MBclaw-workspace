@@ -261,14 +261,30 @@ class ToolExecutor(
                     else { try { java.io.File(path).readText().take(3000) } catch (_:Exception) { "需Root权限读取系统文件" } }
                 }
                 "uninstall_app" -> {
-                    systemAmStart(Intent.ACTION_DELETE, "package:${args.optString("package_name")}")
-                    "卸载界面已打开"
+                    // bug.2: root 静默卸载前自动备份，3 份循环；系统应用 → 高风险，需 confirm
+                    val pkg = args.optString("package_name")
+                    val confirm = args.optBoolean("confirm", false)
+                    val risk = SafeOps.appRisk(context, pkg)
+                    if (risk == SafeOps.Risk.HIGH && !confirm) {
+                        "⚠️ $pkg 是系统应用，删除可能导致系统不稳定。如确认删除，请在 LLM 调用时传 confirm=true"
+                    } else if (tier.hasRoot) {
+                        val (ok, msg) = SafeOps.backupApp(context, pkg)
+                        val backupNote = if (ok) "💾 已备份: $msg\n" else "⚠️ 备份失败 ($msg)，继续卸载\n"
+                        val result = execRoot("pm uninstall --user 0 $pkg")
+                        backupNote + (if (result?.contains("Success") == true) "✅ $pkg 已静默卸载" else "❌ 卸载失败: $result")
+                    } else {
+                        systemAmStart(Intent.ACTION_DELETE, "package:$pkg")
+                        "无 Root，卸载界面已打开（无自动备份）"
+                    }
                 }
                 "force_stop_app" -> {
-                    if (shizuku.isReady()) {
-                        shizuku.forceStopApp(args.optString("package_name"))
+                    val pkg = args.optString("package_name")
+                    if (tier.hasRoot) {
+                        execRoot("am force-stop $pkg")?.let { "✅ 已强停 $pkg" } ?: "❌ 强停失败"
+                    } else if (shizuku.isReady()) {
+                        shizuku.forceStopApp(pkg); "✅ 已强停 (Shizuku)"
                     } else {
-                        systemAmStart(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:${args.optString("package_name")}")
+                        systemAmStart(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:$pkg")
                         "应用详情已打开，请手动强制停止"
                     }
                 }
@@ -410,15 +426,32 @@ class ToolExecutor(
 
                 // ── 文件系统 (root 直接 cat/echo/cp 等) ──
                 "write_file" -> {
+                    // bug.2: 写入前自动备份原文件（如果存在），高风险路径需 confirm
                     val path = args.optString("path"); val content = args.optString("content")
-                    if (tier.hasRoot) {
-                        val tmp = "/data/local/tmp/mbclaw_w_${System.currentTimeMillis()}"
-                        java.io.File(tmp).writeText(content)
-                        execRoot("mkdir -p \"$(dirname '$path')\" && cp '$tmp' '$path' && rm '$tmp'")
-                        "已写入 $path"
+                    val confirm = args.optBoolean("confirm", false)
+                    val risk = SafeOps.pathRisk(path)
+                    if (risk == SafeOps.Risk.HIGH && !confirm) {
+                        "⚠️ $path 属于系统路径，写入可能导致系统不稳定。如确认，请传 confirm=true"
                     } else {
-                        try { java.io.File(path).also { it.parentFile?.mkdirs() }.writeText(content); "已写入 $path" }
-                        catch (e: Exception) { "失败: ${e.message}" }
+                        val existed = if (tier.hasRoot)
+                            (execRoot("test -f '$path' && echo Y") ?: "").contains("Y")
+                        else java.io.File(path).exists()
+                        val backupNote = if (existed) {
+                            val (ok, msg) = SafeOps.backupFile(context, path)
+                            if (ok) "💾 已备份原文件: $msg\n" else "⚠️ 备份失败: $msg\n"
+                        } else ""
+                        if (tier.hasRoot) {
+                            val tmp = java.io.File(context.cacheDir, "mbclaw_w_${System.currentTimeMillis()}")
+                            tmp.writeText(content)
+                            execRoot("mkdir -p \"$(dirname '$path')\" && cp '${tmp.absolutePath}' '$path' && chmod 644 '$path'")
+                            tmp.delete()
+                            backupNote + "✅ 已写入 $path"
+                        } else {
+                            try {
+                                java.io.File(path).also { it.parentFile?.mkdirs() }.writeText(content)
+                                backupNote + "✅ 已写入 $path"
+                            } catch (e: Exception) { "失败: ${e.message}" }
+                        }
                     }
                 }
                 "append_file" -> {
@@ -427,18 +460,42 @@ class ToolExecutor(
                     else try { java.io.File(path).appendText(content); "已追加" } catch (e: Exception) { "失败: ${e.message}" }
                 }
                 "edit_file" -> {
+                    // bug.2: 编辑前自动备份
                     val path = args.optString("path"); val oldT = args.optString("old_text"); val newT = args.optString("new_text")
-                    try {
+                    val confirm = args.optBoolean("confirm", false)
+                    val risk = SafeOps.pathRisk(path)
+                    if (risk == SafeOps.Risk.HIGH && !confirm) "⚠️ $path 高风险，需 confirm=true"
+                    else try {
                         val f = java.io.File(path)
                         val txt = if (tier.hasRoot) execRoot("cat '$path'") ?: f.readText() else f.readText()
                         if (oldT !in txt) "未找到 old_text"
-                        else { val nu = txt.replace(oldT, newT); if (tier.hasRoot) { val tmp = "/data/local/tmp/mbclaw_e_${System.currentTimeMillis()}"; java.io.File(tmp).writeText(nu); execRoot("cp '$tmp' '$path' && rm '$tmp'"); "已替换" } else { f.writeText(nu); "已替换" } }
+                        else {
+                            val (ok, msg) = SafeOps.backupFile(context, path)
+                            val backupNote = if (ok) "💾 已备份: $msg\n" else ""
+                            val nu = txt.replace(oldT, newT)
+                            if (tier.hasRoot) {
+                                val tmp = java.io.File(context.cacheDir, "mbclaw_e_${System.currentTimeMillis()}")
+                                tmp.writeText(nu)
+                                execRoot("cp '${tmp.absolutePath}' '$path'")
+                                tmp.delete()
+                            } else f.writeText(nu)
+                            backupNote + "✅ 已替换"
+                        }
                     } catch (e: Exception) { "失败: ${e.message}" }
                 }
                 "delete_file" -> {
+                    // bug.2: 删除前自动备份
                     val path = args.optString("path")
-                    if (tier.hasRoot) execRoot("rm -rf '$path' && echo OK") ?: "失败"
-                    else try { java.io.File(path).deleteRecursively().let { if (it) "已删除" else "失败" } } catch (e: Exception) { "失败: ${e.message}" }
+                    val confirm = args.optBoolean("confirm", false)
+                    val risk = SafeOps.pathRisk(path)
+                    if (risk == SafeOps.Risk.HIGH && !confirm) "⚠️ $path 是系统路径，删除可能破坏系统。如确认，请传 confirm=true"
+                    else {
+                        val (ok, msg) = SafeOps.backupFile(context, path)
+                        val backupNote = if (ok) "💾 已备份: $msg\n" else "⚠️ 备份跳过: $msg\n"
+                        val r = if (tier.hasRoot) execRoot("rm -rf '$path' && echo OK")
+                                else try { if (java.io.File(path).deleteRecursively()) "OK" else null } catch (_: Exception) { null }
+                        backupNote + if (r?.contains("OK") == true) "✅ 已删除 $path" else "❌ 删除失败"
+                    }
                 }
                 "copy_file" -> execRoot("cp -r '${args.optString("src")}' '${args.optString("dst")}' && echo OK") ?: try { java.io.File(args.optString("src")).copyRecursively(java.io.File(args.optString("dst")), true); "已拷贝" } catch (e: Exception) { "失败: ${e.message}" }
                 "move_file" -> execRoot("mv '${args.optString("src")}' '${args.optString("dst")}' && echo OK") ?: try { java.io.File(args.optString("src")).renameTo(java.io.File(args.optString("dst"))).let { if (it) "已移动" else "失败" } } catch (e: Exception) { "失败: ${e.message}" }

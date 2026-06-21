@@ -11,31 +11,41 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 /**
- * ChatViewModel — 把 ChatScreen 的状态从 Composable 提升到普通对象
+ * ChatViewModel — 进程级单例
  *
- * 解决：
- *  • bug.4 — tab 切换时 Composable 销毁状态丢失
- *  • bug.5 — 重启 app 不接续上次会话
- *
- * 由 MBclawMainScreen 用 remember(agent) 持有，整个 app 生命周期不销毁
+ * bug.5 真修：
+ *  • 进程级单例，不依赖 Composable remember
+ *  • 进程被杀重启 → 单例重建 → initIfNeeded() 从 DB 自动加载最后会话
+ *  • 必须用 Companion.get() 获取，禁止 new
  */
-class ChatViewModel(private val ctx: Context, val agent: MBclawAgent) {
+class ChatViewModel private constructor(private val ctx: Context, val agent: MBclawAgent) {
 
     val messages = mutableStateListOf<ChatMsg>()
     val inputText = mutableStateOf("")
     val isThinking = mutableStateOf(false)
     val agentStatus = mutableStateOf("")
     val sessionId = mutableStateOf("")
-    val tokenStats = mutableStateOf(TokenStats())   // bug.token.1: 每次对话的 token 统计
+    val tokenStats = mutableStateOf(TokenStats())
 
     private val agentLoop = AgentLoop(ctx, agent.db, agent.settings)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private var initialized = false
+    @Volatile private var initialized = false
 
-    /** 首次进入 chat tab 时调（幂等） */
+    companion object {
+        @Volatile private var inst: ChatViewModel? = null
+        fun get(ctx: Context, agent: MBclawAgent): ChatViewModel =
+            inst ?: synchronized(this) {
+                inst ?: ChatViewModel(ctx.applicationContext, agent).also { inst = it }
+            }
+    }
+
+    /** 幂等：首次调用从 DB 恢复最后会话；后续调用直接返回 */
     fun initIfNeeded() {
         if (initialized) return
-        initialized = true
+        synchronized(this) {
+            if (initialized) return
+            initialized = true
+        }
         scope.launch(Dispatchers.IO) {
             agent.initSession()
             val prevSid = agent.db.getLastSessionId()

@@ -35,16 +35,19 @@ class UserSettings(context: Context) {
         get() = prefs.getString("model_name", "deepseek-chat") ?: "deepseek-chat"
         set(v) = prefs.edit().putString("model_name", v).apply()
 
+    // bug.5 (任务 5): 默认开启服务器同步
     var serverSyncEnabled: Boolean
-        get() = prefs.getBoolean("server_sync", false)
+        get() = prefs.getBoolean("server_sync", true)
         set(v) = prefs.edit().putBoolean("server_sync", v).apply()
 
+    // bug.5 (任务 5): 默认连官方后端 47.83.2.188 (80端口走 nginx 反代)
     var serverUrl: String
-        get() = prefs.getString("server_url", "") ?: ""
+        get() = prefs.getString("server_url", "http://47.83.2.188") ?: "http://47.83.2.188"
         set(v) = prefs.edit().putString("server_url", v).apply()
 
+    // bug.5 (任务 5): 默认开启乌托邦计划
     var utopiaEnabled: Boolean
-        get() = prefs.getBoolean("utopia_enabled", false)
+        get() = prefs.getBoolean("utopia_enabled", true)
         set(v) = prefs.edit().putBoolean("utopia_enabled", v).apply()
 
     fun canUploadKey(): Boolean = utopiaEnabled && serverSyncEnabled && serverUrl.isNotBlank()

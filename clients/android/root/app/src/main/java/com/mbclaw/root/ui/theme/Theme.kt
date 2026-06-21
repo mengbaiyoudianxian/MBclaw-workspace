@@ -9,53 +9,61 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-// 主色 → 小米橙；辅色 → 晴空蓝；MiClaw 风格强调 surface 而非 primary
-private val DarkColorScheme = darkColorScheme(
-    primary = MBclawOrange,
-    onPrimary = Color.White,
-    primaryContainer = MBclawOrange.copy(alpha = 0.18f),
-    onPrimaryContainer = MBclawOrange,
-    secondary = MBclawBlue,
-    secondaryContainer = MBclawBlue.copy(alpha = 0.15f),
-    tertiary = MBclawGreen,
-    error = MBclawRed,
-    background = DarkBackground,
-    surface = DarkSurface,
-    surfaceVariant = DarkSurfaceVariant,
-    outline = DarkBorder,
-    onBackground = DarkText,
-    onSurface = DarkText,
-    onSurfaceVariant = DarkTextMuted,
-)
-
 private val LightColorScheme = lightColorScheme(
     primary = MBclawOrange,
     onPrimary = Color.White,
-    primaryContainer = MBclawOrange.copy(alpha = 0.12f),
-    onPrimaryContainer = MBclawOrange,
+    primaryContainer = Color(0xFFFFE9D6),       // 浅橙容器（设置头卡用）
+    onPrimaryContainer = Color(0xFF7A3A00),
     secondary = MBclawBlue,
-    secondaryContainer = MBclawBlue.copy(alpha = 0.10f),
+    onSecondary = MBclawBlueT,
+    secondaryContainer = MBclawBlue,            // 用户气泡用
+    onSecondaryContainer = MBclawBlueT,
     tertiary = MBclawGreen,
     error = MBclawRed,
     background = LightBackground,
-    surface = LightSurface,
-    outline = LightBorder,
     onBackground = LightText,
+    surface = LightSurface,                     // 卡片白
     onSurface = LightText,
-    onSurfaceVariant = LightTextMuted,
+    surfaceVariant = LightSurfaceVar,           // AI 气泡 / 二级卡片
+    onSurfaceVariant = LightText,               // bug.3: AI 气泡文字用深色不用muted
+    outline = LightTextMuted,                   // 副标题灰
+    outlineVariant = LightBorder,               // 分隔线
+)
+
+private val DarkColorScheme = darkColorScheme(
+    primary = MBclawOrange,
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFF4A2200),
+    onPrimaryContainer = Color(0xFFFFE9D6),
+    secondary = MBclawBlue,
+    onSecondary = Color.Black,
+    secondaryContainer = Color(0xFF334466),
+    onSecondaryContainer = Color(0xFFE0EAFF),
+    tertiary = MBclawGreen,
+    error = MBclawRed,
+    background = DarkBackground,
+    onBackground = DarkText,
+    surface = DarkSurface,
+    onSurface = DarkText,
+    surfaceVariant = DarkSurfaceVariant,
+    onSurfaceVariant = DarkText,                // bug.3: 暗色 AI 气泡文字用主色
+    outline = DarkTextMuted,
+    outlineVariant = DarkBorder,
 )
 
 @Composable
 fun MBclawTheme(
-    darkTheme: Boolean = true,
-    content: @Composable () -> Unit
+    darkTheme: Boolean = false,                 // 仿 MiClaw 默认浅色
+    content: @Composable () -> Unit,
 ) {
     val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
+            @Suppress("DEPRECATION")
             window.statusBarColor = colorScheme.background.toArgb()
+            @Suppress("DEPRECATION")
             window.navigationBarColor = colorScheme.background.toArgb()
             WindowCompat.getInsetsController(window, view).apply {
                 isAppearanceLightStatusBars = !darkTheme

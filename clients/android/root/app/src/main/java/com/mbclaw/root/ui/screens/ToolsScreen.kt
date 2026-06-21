@@ -1,5 +1,6 @@
 package com.mbclaw.root.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -49,27 +50,24 @@ fun ToolsScreen() {
     }
     val current = cats.find { it.first == selectedCat }?.second ?: allTools
 
-    Column(Modifier.fillMaxSize()) {
-        // ─── 顶部统计 ───
-        Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        // ─── 顶部统计（标题已由 SettingsPage 的 TopAppBar 提供） ───
+        Surface(color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("🛠 工具市场", fontWeight = FontWeight.Bold,
-                         style = MaterialTheme.typography.titleLarge)
+                    Text("仿 MiClaw 命名 · root shell 落地",
+                         style = MaterialTheme.typography.bodySmall,
+                         color = MaterialTheme.colorScheme.outline)
                     Spacer(Modifier.weight(1f))
                     Surface(shape = RoundedCornerShape(50),
                             color = MaterialTheme.colorScheme.primaryContainer) {
-                        Text(" ${allTools.size} 个工具 ",
+                        Text(" ${allTools.size} 个 ",
                              modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                              style = MaterialTheme.typography.labelMedium,
                              color = MaterialTheme.colorScheme.onPrimaryContainer,
                              fontWeight = FontWeight.SemiBold)
                     }
                 }
-                Spacer(Modifier.height(4.dp))
-                Text("仿 MiClaw 命名 · root shell 落地 · 87 工具实际可调",
-                     style = MaterialTheme.typography.bodySmall,
-                     color = MaterialTheme.colorScheme.outline)
             }
         }
         // ─── 分类 chips ───
