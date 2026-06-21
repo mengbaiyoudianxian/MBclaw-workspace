@@ -615,14 +615,36 @@ class ToolExecutor(
                 "load_message" -> "消息 ${args.optString("message_id")} — TODO 接 MessageRepo"
 
                 // ── 本地沙箱 (root shell) ──
+                // 修复 (bug.1): app UID 不能写 /data/local/tmp/，必须用 root 通道写脚本
+                // 方案 A：通过 heredoc 用 root shell 直接写文件
+                // 方案 B：先写 app 私有目录(app UID 有权)，然后 root 执行
                 "local_sandbox_run" -> {
                     val lang = args.optString("lang"); val code = args.optString("code")
                     val timeout = args.optInt("timeout_ms", 15000)
-                    val tmp = "/data/local/tmp/mbclaw_box_${System.currentTimeMillis()}"
-                    when (lang) {
-                        "python" -> { java.io.File("$tmp.py").writeText(code); execRoot("timeout ${timeout/1000} python3 $tmp.py 2>&1; rm $tmp.py") ?: "需 Root 且系统安装 python3" }
-                        "shell" -> { java.io.File("$tmp.sh").writeText(code); execRoot("timeout ${timeout/1000} sh $tmp.sh 2>&1; rm $tmp.sh") ?: "需 Root" }
-                        else -> "未知 lang=$lang"
+                    if (!tier.hasRoot) "需 Root 权限"
+                    else {
+                        // 用 app 私有目录写脚本（app UID 有权），然后 root 执行（绕过 SELinux 的 /data/local/tmp 限制）
+                        val tmpFile = java.io.File(context.cacheDir, "mbclaw_box_${System.currentTimeMillis()}.${if (lang == "python") "py" else "sh"}")
+                        try {
+                            tmpFile.writeText(code)
+                            tmpFile.setReadable(true, false)
+                            tmpFile.setExecutable(true, false)
+                            val timeoutS = (timeout / 1000).coerceAtLeast(1)
+                            val cmd = when (lang) {
+                                "python" -> "timeout $timeoutS python3 '${tmpFile.absolutePath}' 2>&1"
+                                "shell"  -> "timeout $timeoutS sh     '${tmpFile.absolutePath}' 2>&1"
+                                else     -> return@withContext "未知 lang=$lang"
+                            }
+                            val out = execRoot(cmd) ?: "root 命令执行失败"
+                            tmpFile.delete()
+                            // python3 不存在的兜底
+                            if (lang == "python" && out.contains("not found", ignoreCase = true)) {
+                                "❌ python3 未安装。可用 'pkg install python' (Termux) 或推送静态二进制到 /data/adb/mbclaw/bin/"
+                            } else out.ifBlank { "(无输出)" }
+                        } catch (e: Exception) {
+                            tmpFile.delete()
+                            "失败: ${e.message}"
+                        }
                     }
                 }
 

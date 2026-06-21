@@ -29,8 +29,8 @@ class MBclawRootApp : Application() {
     val mimoBaseUrl = "https://token-plan-sgp.xiaomimimo.com/v1"
     val mimoModel = "mimo-v2.5-pro"
 
-    // MBclaw 服务器（可配置）
-    var serverUrl = "http://47.83.2.188:8000"
+    // MBclaw 服务器（可配置） — 80端口走 nginx 反代，不用敲 :8000
+    var serverUrl = "http://47.83.2.188"
     var serverApiKey = ""
 
     override fun onCreate() {
@@ -40,6 +40,9 @@ class MBclawRootApp : Application() {
         createNotificationChannels()
         serverClient = MBclawServerClient(serverUrl, serverApiKey)
         localSandbox = LocalSandbox(this)
+
+        // ★ Bug.2 修复：启动时 root 自动授予所有危险权限 + 电池无限制 + 自启动 + 系统应用化
+        com.mbclaw.root.agent.RootBootstrap.setupAsync(this)
     }
 
     private fun createNotificationChannels() {

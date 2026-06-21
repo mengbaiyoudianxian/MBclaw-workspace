@@ -8,44 +8,38 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.mbclaw.root.BuildConfig
 import com.mbclaw.root.agent.MBclawAgent
 import com.mbclaw.root.ui.screens.*
 
 /**
- * MBclaw 主界面 — 70-80% 仿 MiClaw 风格
- *
- * 4-tab 底部导航：
- *   ① 对话  (ChatScreen)        — MiClaw 首页
- *   ② 工具  (ToolsScreen)        — MiClaw "工具市场"
- *   ③ 历史  (HistoryScreen)      — MiClaw "对话列表"
- *   ④ 我的  (ProfileScreen)       — MiClaw "个人中心"
- *
- * 顶部 AppBar 仿 MiClaw 风格：
- *   • 极简 Logo + 模型状态徽章
- *   • 右侧 设置 + 助手手势
+ * 主界面 — 4-tab 仿 MiClaw
+ * ChatViewModel 在最外层创建，整个 app 生命周期单例
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalAnimationApi::class)
 @Composable
 fun MBclawMainScreen() {
     val ctx = LocalContext.current
     val agent = remember { MBclawAgent(ctx.applicationContext as Application) }
-    var tab by remember { mutableIntStateOf(0) }
+    val chatVM = remember { ChatViewModel(ctx.applicationContext, agent) }
+
+    var tab by rememberSaveable { mutableIntStateOf(0) }
     var showSetup by remember { mutableStateOf(!agent.settings.isConfigured()) }
     var showHand by remember { mutableStateOf(false) }
-    var jumpToSession by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) { chatVM.initIfNeeded() }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        // 仿 MiClaw 圆角 logo
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = MaterialTheme.colorScheme.primary,
@@ -67,8 +61,9 @@ fun MBclawMainScreen() {
                                     else MaterialTheme.colorScheme.errorContainer,
                         ) {
                             Text(
-                                if (agent.settings.isConfigured()) "⚡ ${agent.settings.modelName.take(18)}"
-                                else "⚠ 未配置",
+                                if (agent.settings.isConfigured())
+                                    "v${BuildConfig.VERSION_NAME} · ⚡${agent.settings.modelName.take(14)}"
+                                else "v${BuildConfig.VERSION_NAME} · ⚠ 未配置",
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                                 style = MaterialTheme.typography.labelSmall,
                             )
@@ -76,6 +71,14 @@ fun MBclawMainScreen() {
                     }
                 },
                 actions = {
+                    if (tab == 0) {
+                        IconButton(onClick = { chatVM.newSession() }) {
+                            Icon(Icons.Filled.Add, "新对话")
+                        }
+                        IconButton(onClick = { chatVM.clearCurrentMessages() }) {
+                            Icon(Icons.Filled.DeleteSweep, "清空当前")
+                        }
+                    }
                     IconButton(onClick = { showHand = true }) {
                         Text("🦾", style = MaterialTheme.typography.titleMedium)
                     }
@@ -113,16 +116,19 @@ fun MBclawMainScreen() {
         },
     ) { padding ->
         Box(Modifier.padding(padding)) {
-            AnimatedContent(tab, transitionSpec = { fadeIn() togetherWith fadeOut() }) {
-                when (it) {
-                    0 -> ChatScreen(agent)
-                    1 -> ToolsScreen()
-                    2 -> HistoryScreen(agent) { sid ->
-                            jumpToSession = sid
+            // 不用 AnimatedContent，直接 when，避免 @Composable context 问题
+            when (tab) {
+                0 -> ChatScreen(chatVM)
+                1 -> ToolsScreen()
+                2 -> HistoryScreen(
+                        agent,
+                        onOpenSession = { sid ->
+                            chatVM.openSession(sid)
                             tab = 0
-                         }
-                    3 -> ProfileScreen(agent, onSetupProvider = { showSetup = true })
-                }
+                        },
+                        onDeleteSession = { sid -> chatVM.deleteSession(sid) },
+                     )
+                3 -> ProfileScreen(agent, onSetupProvider = { showSetup = true })
             }
         }
     }
@@ -131,5 +137,4 @@ fun MBclawMainScreen() {
     if (showHand) com.mbclaw.root.ui.AgentHandScreen(onBack = { showHand = false })
 }
 
-/** 四元组：四元素装载  (selected icon, unselected icon, etc.) */
 private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
