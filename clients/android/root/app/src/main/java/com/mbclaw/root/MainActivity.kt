@@ -6,6 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.mbclaw.root.ui.MBclawMainScreen
 import com.mbclaw.root.ui.theme.MBclawTheme
@@ -25,7 +26,19 @@ class MainActivity : ComponentActivity() {
         // AgentService 由 BootReceiver 或用户手动启动
 
         setContent {
-            MBclawTheme(darkTheme = true) {
+            // 读取用户主题偏好 (light/dark/system) 并响应即时切换
+            com.mbclaw.root.ui.theme.ThemePreference.ensureInit(this)
+            val mode by com.mbclaw.root.ui.theme.ThemePreference.currentMode!!
+            val isDark = when (mode) {
+                "dark" -> true
+                "light" -> false
+                else -> {
+                    val ui = resources.configuration.uiMode and
+                             android.content.res.Configuration.UI_MODE_NIGHT_MASK
+                    ui == android.content.res.Configuration.UI_MODE_NIGHT_YES
+                }
+            }
+            MBclawTheme(darkTheme = isDark) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     MBclawMainScreen()
                 }

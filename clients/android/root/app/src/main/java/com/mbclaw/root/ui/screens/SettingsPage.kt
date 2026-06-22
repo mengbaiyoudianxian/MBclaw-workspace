@@ -192,19 +192,40 @@ fun SettingsPage(
                     onClick = onSetupProvider,
                 )
                 SettingDivider()
+                // 视觉模型
+                var showVision by remember { mutableStateOf(false) }
+                var showVoice by remember { mutableStateOf(false) }
+                SettingItemRow(
+                    "👁 视觉识图模型",
+                    subtitle = if (s.visionEnabled && s.visionApiKey.isNotBlank())
+                        "已配 · ${s.visionModel}"
+                    else "未配 · 主模型不支持识图时使用",
+                    onClick = { showVision = true },
+                )
+                SettingDivider()
+                SettingItemRow(
+                    "🎤 语音 TTS / ASR 模型",
+                    subtitle = if (s.voiceEnabled && s.voiceApiKey.isNotBlank())
+                        "已配 · ${s.voiceTtsModel} / ${s.voiceAsrModel}"
+                    else "未配 · 输入/输出语音时使用",
+                    onClick = { showVoice = true },
+                )
+                SettingDivider()
                 SettingItemRow(
                     "工具市场",
                     subtitle = "${com.mbclaw.root.agent.ToolRegistry.ALL.size} 个工具 · 添加 / 上传 / 下载",
                     onClick = onOpenTools,
                 )
                 SettingDivider()
-                // 任务 11: 白嫖 miclaw 算力
                 SettingItemRow(
                     "🎁 白嫖 MiClaw 算力",
                     subtitle = "通过 NEORUAA bridge 中转 · 服务器隐藏 Key",
                     onClick = { showMiclawSheet = true },
                 )
                 SettingDivider()
+
+                if (showVision) VisionVoiceSheet(ctx = ctx, settings = s, initialTab = 0, onDismiss = { showVision = false })
+                if (showVoice) VisionVoiceSheet(ctx = ctx, settings = s, initialTab = 1, onDismiss = { showVoice = false })
                 SettingItemRow(
                     "智能手 (Agent Hand)",
                     subtitle = "看得见点得准 · 校准 / 区块识别 / 模糊点击",

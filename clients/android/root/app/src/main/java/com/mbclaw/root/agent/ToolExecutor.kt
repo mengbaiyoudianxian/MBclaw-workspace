@@ -209,49 +209,87 @@ class ToolExecutor(
                     } else "录屏需要Root或Shizuku"
                 }
                 "click_at" -> {
-                    val svc = MBclawAccessibilityService.instance
-                    if (svc?.clickAt(args.optInt("x").toFloat(), args.optInt("y").toFloat()) == true)
-                        "点击 (无障碍API)"
-                    else if (hasRoot) { execRoot("input tap ${args.optInt("x")} ${args.optInt("y")}"); "点击 (Root)" }
-                    else if (shizuku.isReady()) { shizuku.inputTap(args.optInt("x"), args.optInt("y")); "点击 (Shizuku)" }
-                    else "点击需要Root/Shizuku/无障碍"
+                    // Root 首选 — input tap 在任何 app 上都有效
+                    val x = args.optInt("x"); val y = args.optInt("y")
+                    when {
+                        tier.hasRoot -> { execRoot("input tap $x $y"); "👆 点击 ($x,$y) [Root]" }
+                        tier.hasAdb -> { shizuku.inputTap(x, y); "👆 点击 ($x,$y) [Shizuku]" }
+                        tier.hasAccessibility -> {
+                            val svc = MBclawAccessibilityService.instance
+                            if (svc?.clickAt(x.toFloat(), y.toFloat()) == true) "👆 点击 ($x,$y) [无障碍]"
+                            else "❌ 无障碍点击失败"
+                        }
+                        else -> "❌ 需要 Root/Shizuku/无障碍 任一权限"
+                    }
                 }
                 "long_press_at" -> {
-                    val svc = MBclawAccessibilityService.instance
-                    if (svc?.longClickAt(args.optInt("x").toFloat(), args.optInt("y").toFloat(), args.optLong("duration_ms", 800)) == true) "长按完成"
-                    else "长按需要无障碍服务"
+                    val x = args.optInt("x"); val y = args.optInt("y")
+                    val dur = args.optLong("duration_ms", 800)
+                    when {
+                        tier.hasRoot -> { execRoot("input swipe $x $y $x $y $dur"); "👇 长按 ($x,$y) ${dur}ms [Root]" }
+                        tier.hasAdb -> { shizuku.exec("input swipe $x $y $x $y $dur"); "👇 长按 [Shizuku]" }
+                        tier.hasAccessibility -> {
+                            val svc = MBclawAccessibilityService.instance
+                            if (svc?.longClickAt(x.toFloat(), y.toFloat(), dur) == true) "👇 长按完成 [无障碍]"
+                            else "❌ 长按失败"
+                        }
+                        else -> "❌ 需要 Root/Shizuku/无障碍"
+                    }
                 }
                 "swipe" -> {
-                    val svc = MBclawAccessibilityService.instance
-                    if (svc?.swipe(args.optInt("x1").toFloat(), args.optInt("y1").toFloat(), args.optInt("x2").toFloat(), args.optInt("y2").toFloat(), args.optLong("duration_ms", 300)) == true) "滑动完成"
-                    else if (hasRoot) { execRoot("input swipe ${args.optInt("x1")} ${args.optInt("y1")} ${args.optInt("x2")} ${args.optInt("y2")}"); "滑动 (Root)" }
-                    else if (shizuku.isReady()) { shizuku.inputSwipe(args.optInt("x1"), args.optInt("y1"), args.optInt("x2"), args.optInt("y2")); "滑动 (Shizuku)" }
-                    else "滑动需要Root/Shizuku/无障碍"
+                    val x1 = args.optInt("x1"); val y1 = args.optInt("y1")
+                    val x2 = args.optInt("x2"); val y2 = args.optInt("y2")
+                    val dur = args.optLong("duration_ms", 300)
+                    when {
+                        tier.hasRoot -> { execRoot("input swipe $x1 $y1 $x2 $y2 $dur"); "🌊 滑动 ($x1,$y1)→($x2,$y2) [Root]" }
+                        tier.hasAdb -> { shizuku.inputSwipe(x1, y1, x2, y2); "🌊 滑动 [Shizuku]" }
+                        tier.hasAccessibility -> {
+                            val svc = MBclawAccessibilityService.instance
+                            if (svc?.swipe(x1.toFloat(), y1.toFloat(), x2.toFloat(), y2.toFloat(), dur) == true) "🌊 滑动完成 [无障碍]"
+                            else "❌ 滑动失败"
+                        }
+                        else -> "❌ 需要 Root/Shizuku/无障碍"
+                    }
                 }
                 "input_text" -> {
-                    val svc = MBclawAccessibilityService.instance
-                    if (svc?.inputText(args.optString("text")) == true) "输入完成"
-                    else "输入需要无障碍服务"
+                    val text = args.optString("text").replace("'", "'\\''")
+                    when {
+                        tier.hasRoot -> { execRoot("input text '$text'"); "⌨️ 输入完成 [Root]" }
+                        tier.hasAdb -> { shizuku.exec("input text '$text'"); "⌨️ 输入完成 [Shizuku]" }
+                        tier.hasAccessibility -> {
+                            val svc = MBclawAccessibilityService.instance
+                            if (svc?.inputText(args.optString("text")) == true) "⌨️ 输入完成 [无障碍]"
+                            else "❌ 输入失败 - 当前焦点不在输入框?"
+                        }
+                        else -> "❌ 需要 Root/Shizuku/无障碍"
+                    }
                 }
                 "press_key" -> {
-                    val svc = MBclawAccessibilityService.instance
-                    val keyCode = when (args.optString("key")) {
-                        "BACK" -> android.view.KeyEvent.KEYCODE_BACK; "HOME" -> android.view.KeyEvent.KEYCODE_HOME
-                        "RECENTS" -> android.view.KeyEvent.KEYCODE_APP_SWITCH; "ENTER" -> android.view.KeyEvent.KEYCODE_ENTER
-                        "DELETE" -> android.view.KeyEvent.KEYCODE_DEL; "VOLUME_UP" -> android.view.KeyEvent.KEYCODE_VOLUME_UP
-                        "VOLUME_DOWN" -> android.view.KeyEvent.KEYCODE_VOLUME_DOWN; "POWER" -> android.view.KeyEvent.KEYCODE_POWER
+                    val keyName = args.optString("key").uppercase()
+                    val keyCode = when (keyName) {
+                        "BACK" -> 4; "HOME" -> 3; "RECENTS" -> 187; "ENTER" -> 66
+                        "DELETE" -> 67; "VOLUME_UP" -> 24; "VOLUME_DOWN" -> 25
+                        "POWER" -> 26; "MENU" -> 82; "SEARCH" -> 84
+                        "CAMERA" -> 27; "TAB" -> 61; "SPACE" -> 62
                         else -> 0
                     }
-                    if (keyCode > 0) {
-                        val globalAction = when (keyCode) {
-                            android.view.KeyEvent.KEYCODE_BACK -> android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK
-                            android.view.KeyEvent.KEYCODE_HOME -> android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME
-                            android.view.KeyEvent.KEYCODE_APP_SWITCH -> android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_RECENTS
-                            else -> -1
+                    if (keyCode <= 0) "❌ 未知按键 $keyName"
+                    else when {
+                        tier.hasRoot -> { execRoot("input keyevent $keyCode"); "⌨️ 按下 $keyName [Root]" }
+                        tier.hasAdb -> { shizuku.exec("input keyevent $keyCode"); "⌨️ 按下 $keyName [Shizuku]" }
+                        tier.hasAccessibility -> {
+                            val svc = MBclawAccessibilityService.instance
+                            val globalAction = when (keyCode) {
+                                4 -> android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK
+                                3 -> android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME
+                                187 -> android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_RECENTS
+                                else -> -1
+                            }
+                            if (globalAction >= 0 && svc?.performGlobalAction(globalAction) == true) "⌨️ 按下 $keyName [无障碍]"
+                            else "❌ 无障碍只支持 BACK/HOME/RECENTS"
                         }
-                        if (globalAction >= 0 && svc?.performGlobalAction(globalAction) == true) "按键完成"
-                        else "按键需要无障碍服务"
-                    } else "未知按键"
+                        else -> "❌ 需要 Root/Shizuku/无障碍"
+                    }
                 }
 
                 // ═══ App管理 ═══

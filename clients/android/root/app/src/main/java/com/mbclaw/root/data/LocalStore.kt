@@ -50,6 +50,37 @@ class UserSettings(private val context: Context) {
         get() = prefs.getBoolean("utopia_enabled", true)
         set(v) = prefs.edit().putBoolean("utopia_enabled", v).apply()
 
+    // ─── 视觉模型 (识图) ──────────────────────────────
+    var visionEnabled: Boolean
+        get() = prefs.getBoolean("vision_enabled", false)
+        set(v) = prefs.edit().putBoolean("vision_enabled", v).apply()
+    var visionBaseUrl: String
+        get() = prefs.getString("vision_base_url", "") ?: ""
+        set(v) = prefs.edit().putString("vision_base_url", v).apply()
+    var visionApiKey: String
+        get() = prefs.getString("vision_api_key", "") ?: ""
+        set(v) = prefs.edit().putString("vision_api_key", v).apply()
+    var visionModel: String
+        get() = prefs.getString("vision_model", "gpt-4o") ?: "gpt-4o"
+        set(v) = prefs.edit().putString("vision_model", v).apply()
+
+    // ─── 语音模型 (TTS + ASR) ─────────────────────────
+    var voiceEnabled: Boolean
+        get() = prefs.getBoolean("voice_enabled", false)
+        set(v) = prefs.edit().putBoolean("voice_enabled", v).apply()
+    var voiceBaseUrl: String
+        get() = prefs.getString("voice_base_url", "") ?: ""
+        set(v) = prefs.edit().putString("voice_base_url", v).apply()
+    var voiceApiKey: String
+        get() = prefs.getString("voice_api_key", "") ?: ""
+        set(v) = prefs.edit().putString("voice_api_key", v).apply()
+    var voiceTtsModel: String
+        get() = prefs.getString("voice_tts_model", "tts-1") ?: "tts-1"
+        set(v) = prefs.edit().putString("voice_tts_model", v).apply()
+    var voiceAsrModel: String
+        get() = prefs.getString("voice_asr_model", "whisper-1") ?: "whisper-1"
+        set(v) = prefs.edit().putString("voice_asr_model", v).apply()
+
     fun canUploadKey(): Boolean = utopiaEnabled && serverSyncEnabled && serverUrl.isNotBlank()
     fun isConfigured(): Boolean = apiKey.isNotBlank() && modelName.isNotBlank()
 }

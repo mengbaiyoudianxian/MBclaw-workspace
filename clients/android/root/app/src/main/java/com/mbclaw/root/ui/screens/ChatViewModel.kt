@@ -141,13 +141,23 @@ class ChatViewModel private constructor(private val ctx: Context, val agent: MBc
         messages.add(ChatMsg("user", text))
         isThinking.value = true
         agentStatus.value = "🤖 启动中…"
+
+        // ★ 启动悬浮窗 + 常驻通知
+        com.mbclaw.root.service.AgentFloatingService.start(ctx, "运行")
+        registerCancelReceiver()
+
         scope.launch {
             try {
                 val reply = agentLoop.run(text, sessionId.value, maxTurns = 20) { status ->
                     agentStatus.value = status
+                    // 更新悬浮窗 + 通知
+                    com.mbclaw.root.service.AgentFloatingService.update(
+                        ctx,
+                        status.ifBlank { "思考中" },
+                        agentLoop.currentTool
+                    )
                 }
                 messages.add(ChatMsg("assistant", reply))
-                // 更新 token 统计 (粗估)
                 val inTokens = (text.length / 1.5).toInt()
                 val outTokens = (reply.length / 1.5).toInt()
                 tokenStats.value = tokenStats.value.copy(
@@ -161,12 +171,33 @@ class ChatViewModel private constructor(private val ctx: Context, val agent: MBc
             }
             isThinking.value = false
             agentStatus.value = ""
+            com.mbclaw.root.service.AgentFloatingService.stop(ctx)
         }
     }
 
     fun cancel() {
         agentLoop.cancel()
         agentStatus.value = "⏹ 终止中…"
+        com.mbclaw.root.service.AgentFloatingService.stop(ctx)
+    }
+
+    // 接收悬浮窗/通知的"取消"广播
+    private var cancelReceiver: android.content.BroadcastReceiver? = null
+    private fun registerCancelReceiver() {
+        if (cancelReceiver != null) return
+        cancelReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(c: android.content.Context, i: android.content.Intent) {
+                cancel()
+            }
+        }
+        try {
+            val filter = android.content.IntentFilter("com.mbclaw.action.USER_CANCEL_AGENT")
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                ctx.registerReceiver(cancelReceiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                ctx.registerReceiver(cancelReceiver, filter)
+            }
+        } catch (_: Exception) {}
     }
 
     private fun welcomeMsg(): ChatMsg {

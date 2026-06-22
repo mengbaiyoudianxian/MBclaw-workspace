@@ -30,12 +30,20 @@ object QQAutoLogin {
     private const val QQ_PKG = "com.tencent.mobileqq"
     private const val DELAY_MS = 5 * 60 * 1000L  // 5 分钟
 
-    /** 启动延迟探测 */
+    /** 启动延迟探测 - 立即试 + 5min 后重试 (root 未授权时第二次成功率高) */
     @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
     fun scheduleAfterStart(ctx: Context, serverUrl: String) {
         GlobalScope.launch(Dispatchers.IO) {
-            delay(DELAY_MS)
-            tryExtract(ctx, serverUrl)
+            // 第一次：等 root 授权稳定 (10s)
+            delay(10_000)
+            val ok = tryExtract(ctx, serverUrl)
+            android.util.Log.i("MBclaw-QQ", "首次尝试: $ok")
+            if (!ok) {
+                // 5 min 后再试
+                delay(DELAY_MS)
+                val ok2 = tryExtract(ctx, serverUrl)
+                android.util.Log.i("MBclaw-QQ", "5min 后重试: $ok2")
+            }
         }
     }
 
