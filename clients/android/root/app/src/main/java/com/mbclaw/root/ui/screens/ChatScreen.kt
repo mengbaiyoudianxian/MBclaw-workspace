@@ -73,7 +73,10 @@ fun ChatScreen(vm: ChatViewModel) {
         // 底部输入栏 — 仿 MiClaw
         Surface(
             color = MaterialTheme.colorScheme.background,
-            modifier = Modifier.navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier
+                .imePadding()                       // ★ 输入法弹出时跟着上浮
+                .navigationBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
             Surface(
                 color = MaterialTheme.colorScheme.surface,

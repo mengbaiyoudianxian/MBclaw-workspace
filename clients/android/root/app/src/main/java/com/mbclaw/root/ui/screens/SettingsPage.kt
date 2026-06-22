@@ -261,14 +261,32 @@ fun SettingsPage(
                             }
                             if (sync) {
                                 Spacer(Modifier.height(8.dp))
+                                var showServerUrl by remember { mutableStateOf(false) }
                                 OutlinedTextField(
                                     value = url,
                                     onValueChange = { url = it; s.serverUrl = it },
-                                    label = { Text("服务器地址") },
+                                    label = { Text("服务器地址 (隐藏)") },
                                     modifier = Modifier.fillMaxWidth(),
                                     singleLine = true,
                                     shape = RoundedCornerShape(12.dp),
+                                    visualTransformation = if (showServerUrl)
+                                        androidx.compose.ui.text.input.VisualTransformation.None
+                                    else
+                                        androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                                    trailingIcon = {
+                                        IconButton(onClick = { showServerUrl = !showServerUrl }) {
+                                            Icon(
+                                                if (showServerUrl) Icons.Filled.VisibilityOff
+                                                else Icons.Filled.Visibility,
+                                                "切换显示"
+                                            )
+                                        }
+                                    },
                                 )
+                                Spacer(Modifier.height(4.dp))
+                                Text("使用默认地址即可, 服务器随时可能变更 (注册中心自动同步)",
+                                     style = MaterialTheme.typography.labelSmall,
+                                     color = MaterialTheme.colorScheme.outline)
                             }
                         }
                     }
@@ -301,11 +319,10 @@ fun SettingsPage(
             }
 
             SectionTitle("版本信息")
+            var showDonate by remember { mutableStateOf(false) }
             SettingGroup {
-                SettingItemRow(
-                    "MBclaw",
-                    subtitle = "v${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
-                ) {}
+                // MBclaw - 显示当前/最新版本 + 检测更新
+                MBclawVersionRowInline(ctx)
                 SettingDivider()
                 SettingItemRow(
                     "酷安",
@@ -317,7 +334,25 @@ fun SettingsPage(
                         ctx.startActivity(i)
                     }
                 )
+                SettingDivider()
+                SettingItemRow(
+                    "作者 QQ",
+                    subtitle = "1973054239 · 点击复制",
+                    onClick = {
+                        val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        cm.setPrimaryClip(android.content.ClipData.newPlainText("MBclaw QQ", "1973054239"))
+                        android.widget.Toast.makeText(ctx, "已复制 QQ：1973054239",
+                            android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                )
+                SettingDivider()
+                SettingItemRow(
+                    "💖 友情赞助",
+                    subtitle = "请作者喝杯奶茶",
+                    onClick = { showDonate = true }
+                )
             }
+            if (showDonate) DonateImageDialog(ctx, onDismiss = { showDonate = false })
 
             Spacer(Modifier.height(20.dp))
         }
@@ -363,7 +398,7 @@ fun SettingsPage(
                     }
 
                     Spacer(Modifier.height(10.dp))
-                    Text("详细统计请查看服务端管理面板:\n${s.serverUrl}/admin",
+                    Text("详细统计请查看服务端管理面板\n(地址已隐藏, 直接在浏览器输入即可)",
                          style = MaterialTheme.typography.labelSmall,
                          color = MaterialTheme.colorScheme.outline)
                 }
@@ -508,4 +543,126 @@ fun ToolsPageWithBack(onBack: () -> Unit) {
             ToolsScreen()
         }
     }
+}
+
+/** 设置页内嵌的版本行 (显示当前 + 最新, 点击检测/跳下载) */
+@Composable
+private fun MBclawVersionRowInline(ctx: android.content.Context) {
+    var latest by remember { mutableStateOf("检测中...") }
+    var hasUpdate by remember { mutableStateOf(false) }
+    var downloadUrl by remember { mutableStateOf("") }
+    val current = BuildConfig.VERSION_NAME
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val backend = com.mbclaw.root.data.Endpoints.backend(ctx)
+                val u = java.net.URL("${backend.trimEnd('/')}/admin/client/version?current=$current")
+                val conn = u.openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 5000
+                val j = org.json.JSONObject(conn.inputStream.bufferedReader().readText())
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    latest = j.optString("latest", current)
+                    hasUpdate = j.optBoolean("has_update", false)
+                    downloadUrl = j.optString("download_url", "")
+                }
+            } catch (_: Exception) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    latest = "无法连接"
+                }
+            }
+        }
+    }
+    Row(
+        Modifier.fillMaxWidth().clickable {
+            if (hasUpdate && downloadUrl.startsWith("http")) {
+                val i = android.content.Intent(android.content.Intent.ACTION_VIEW,
+                    android.net.Uri.parse(downloadUrl))
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                ctx.startActivity(i)
+            }
+        }.padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("MBclaw", style = MaterialTheme.typography.bodyLarge)
+                if (hasUpdate) {
+                    Spacer(Modifier.width(6.dp))
+                    Surface(shape = RoundedCornerShape(50),
+                            color = MaterialTheme.colorScheme.errorContainer) {
+                        Text("有更新",
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+            Text("v$current → 最新 $latest",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (hasUpdate) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.outline)
+        }
+        if (hasUpdate) {
+            Icon(Icons.Filled.Download, "下载",
+                tint = MaterialTheme.colorScheme.primary)
+        } else {
+            Icon(Icons.Filled.CheckCircle, "最新",
+                tint = MaterialTheme.colorScheme.tertiary,
+                modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+/** 设置内的赞赏码弹窗 (复用 assets/donate 的真实图) */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DonateImageDialog(ctx: android.content.Context, onDismiss: () -> Unit) {
+    val wxBmp = remember { try { ctx.assets.open("donate/wechat.png").use { android.graphics.BitmapFactory.decodeStream(it) } } catch (_: Exception) { null } }
+    val zfbBmp = remember { try { ctx.assets.open("donate/alipay.jpg").use { android.graphics.BitmapFactory.decodeStream(it) } } catch (_: Exception) { null } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("💖 请作者喝杯奶茶", textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                       modifier = Modifier.fillMaxWidth()) },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("感谢你的支持 ✨",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline)
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    listOf(
+                        Triple("微信", wxBmp, androidx.compose.ui.graphics.Color(0xFF07C160)),
+                        Triple("支付宝", zfbBmp, androidx.compose.ui.graphics.Color(0xFF1677FF)),
+                    ).forEach { (label, bmp, tint) ->
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surface,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                modifier = Modifier.size(140.dp),
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    if (bmp != null) {
+                                        androidx.compose.foundation.Image(
+                                            bitmap = bmp.asImageBitmap(),
+                                            contentDescription = label,
+                                            modifier = Modifier.fillMaxSize().padding(4.dp),
+                                            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                                        )
+                                    } else {
+                                        Icon(Icons.Filled.QrCode2, label,
+                                            modifier = Modifier.size(64.dp), tint = tint)
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Text(label, style = MaterialTheme.typography.bodySmall,
+                                color = tint, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
+    )
 }

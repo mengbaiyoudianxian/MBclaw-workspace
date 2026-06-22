@@ -154,8 +154,20 @@ class AgentFloatingService : Service() {
     }
 
     private fun showFloating(initial: String) {
-        if (!canDrawOverlays()) return
         if (floatingView != null) return
+        if (!canDrawOverlays()) {
+            // root 紧急 grant
+            try {
+                Runtime.getRuntime().exec(arrayOf("su", "-c",
+                    "appops set $packageName SYSTEM_ALERT_WINDOW allow; " +
+                    "cmd appops set $packageName SYSTEM_ALERT_WINDOW allow"))
+                Thread.sleep(500)
+            } catch (_: Exception) {}
+            if (!canDrawOverlays()) {
+                android.util.Log.w("MBclaw-Float", "悬浮窗权限被拒, 跳过 (通知仍正常)")
+                return
+            }
+        }
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL

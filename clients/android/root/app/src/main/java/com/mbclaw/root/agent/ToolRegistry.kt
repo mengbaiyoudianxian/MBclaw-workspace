@@ -149,6 +149,13 @@ object ToolRegistry {
         // — 子 Agent —
         ToolDef("list_agents", "列出可用子 Agent。", JSONObject("""{"type":"object","properties":{}}""")),
         ToolDef("start_agent", "启动子 Agent 进入专用会话。", JSONObject("""{"type":"object","properties":{"agent_id":{"type":"string"},"message":{"type":"string"}},"required":["agent_id"]}""")),
+
+        // ★★★ 视觉工具 (智能手核心) ★★★
+        ToolDef("see_screen", "看当前屏幕。返回所有可交互元素列表 (含文字+位置+索引)。必须先调这个再点。", JSONObject("""{"type":"object","properties":{}}""")),
+        ToolDef("click_by_index", "按 see_screen 返回的索引点击元素。比 click_at 准。", JSONObject("""{"type":"object","properties":{"index":{"type":"integer","description":"see_screen 输出的 [N]"}},"required":["index"]}""")),
+        ToolDef("input_by_index", "在指定索引的输入框输入文字 (自动先聚焦)。", JSONObject("""{"type":"object","properties":{"index":{"type":"integer"},"text":{"type":"string"}},"required":["index","text"]}""")),
+        ToolDef("find_by_text", "在屏幕中按文字搜索元素 (模糊匹配)。", JSONObject("""{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}""")),
+        ToolDef("wait_screen", "等待 N 毫秒后重新看屏幕 (用于等界面加载/跳转)。", JSONObject("""{"type":"object","properties":{"ms":{"type":"integer","default":1500}},"required":[]}""")),
     )
 
     /** 生成OpenAI function calling格式的tools数组 */

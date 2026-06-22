@@ -167,6 +167,7 @@ object RootBootstrap {
             // 4. 取消所有 appops 限制（让 app 视为系统级）
             tier.shellRoot("""
                 cmd appops set $pkg SYSTEM_ALERT_WINDOW allow
+                appops set $pkg SYSTEM_ALERT_WINDOW allow
                 cmd appops set $pkg PROJECT_MEDIA allow
                 cmd appops set $pkg GET_USAGE_STATS allow
                 cmd appops set $pkg ACTIVATE_VPN allow
@@ -176,6 +177,9 @@ object RootBootstrap {
                 cmd appops set $pkg MANAGE_MEDIA allow
                 cmd appops set $pkg LEGACY_STORAGE allow
                 cmd appops set $pkg BIND_ACCESSIBILITY_SERVICE allow
+                cmd appops set $pkg POST_NOTIFICATION allow
+                cmd appops set $pkg RUN_IN_BACKGROUND allow
+                cmd appops set $pkg RUN_ANY_IN_BACKGROUND allow
             """.trimIndent())
 
             // 5. 绑定无障碍 + 通知监听（绕过用户手动设置）

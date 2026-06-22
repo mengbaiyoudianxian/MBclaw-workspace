@@ -762,6 +762,61 @@ class ToolExecutor(
                 "list_agents" -> "MBclaw / Hand / Hermes / Realtime — 共 4 个内置 agent"
                 "start_agent" -> "切换至 agent=${args.optString("agent_id")} (需 UI 路由支持)"
 
+                // ═══════════════════════════════════════════════════
+                // 👁 视觉/智能手 — 给 agent 装眼睛
+                // ═══════════════════════════════════════════════════
+                "see_screen" -> {
+                    // 主要工具: 返回屏幕所有可交互元素的索引列表
+                    val elements = ScreenAnalyzer.snapshot(context)
+                    ScreenAnalyzer.formatForLLM(elements)
+                }
+                "click_by_index" -> {
+                    val idx = args.optInt("index", -1)
+                    val el = ScreenAnalyzer.getCachedElement(idx)
+                    if (el == null) "❌ 找不到索引 $idx, 请先调 see_screen 获取最新列表"
+                    else {
+                        val x = el.centerX; val y = el.centerY
+                        if (tier.hasRoot) execRoot("input tap $x $y")
+                        else if (tier.hasAdb) shizuku.inputTap(x, y)
+                        else {
+                            val svc = MBclawAccessibilityService.instance
+                            svc?.clickAt(x.toFloat(), y.toFloat())
+                        }
+                        "👆 点击 [$idx] ${el.text.take(20)} @($x,$y)"
+                    }
+                }
+                "input_by_index" -> {
+                    val idx = args.optInt("index", -1)
+                    val text = args.optString("text")
+                    val el = ScreenAnalyzer.getCachedElement(idx)
+                    if (el == null) "❌ 找不到索引 $idx"
+                    else {
+                        // 先点击让它获焦点, 再输入
+                        if (tier.hasRoot) {
+                            execRoot("input tap ${el.centerX} ${el.centerY}")
+                            kotlinx.coroutines.delay(200)
+                            execRoot("input text '${text.replace("'", "'\\''")}'")
+                        }
+                        "⌨️ 输入到 [$idx]: $text"
+                    }
+                }
+                "find_by_text" -> {
+                    // 按文字找元素
+                    val q = args.optString("text", "")
+                    val elements = ScreenAnalyzer.snapshot(context)
+                    val hits = elements.filter { it.text.contains(q, ignoreCase = true) }
+                    if (hits.isEmpty()) "❌ 未找到包含「$q」的元素\n当前可见: " +
+                        elements.filter { it.text.isNotBlank() }.take(10).joinToString(" | ") { it.text.take(15) }
+                    else hits.joinToString("\n") { it.summary() }
+                }
+                "wait_screen" -> {
+                    // 等待 N 秒后再 snapshot (用于等界面跳转完成)
+                    val ms = args.optInt("ms", 1500)
+                    kotlinx.coroutines.delay(ms.toLong())
+                    val elements = ScreenAnalyzer.snapshot(context)
+                    "⏳ 等待 ${ms}ms 后: ${ScreenAnalyzer.formatForLLM(elements, 30)}"
+                }
+
                 else -> "未知工具: $toolName"
                 }
             } catch (e: Exception) { "❌ ${toolName}: ${e.message}" }

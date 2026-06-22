@@ -206,14 +206,17 @@ class AgentLoop(
         }
         body.put("messages", msgsArr)
 
-        // X-Utopia: 让服务端知道是否对此用户做算力分账
-        //   1 = 用户开了乌托邦, 服务端可以在他自己的实例上抽 20% 给平台池
-        //   0 = 用户独享, 平台不抽
-        // 仅在 base_url 指向 miclaw-bridge 时有意义, 但加上无副作用
+        // X-Utopia: 算力分账标识
+        // X-User-Id: 用户标识 (服务端统计/追踪)
+        val account = com.mbclaw.root.data.AccountManager.load(context)
+        val userId = account.qqId.ifBlank { account.weixinId }.ifBlank { "anon-${com.mbclaw.root.agent.AntiTamper.deviceFingerprint(context).take(8)}" }
+
         val request = Request.Builder().url(url)
             .addHeader("Authorization", "Bearer ${settings.apiKey}")
             .addHeader("Content-Type", "application/json")
             .addHeader("X-Utopia", if (settings.utopiaEnabled) "1" else "0")
+            .addHeader("X-User-Id", userId)
+            .addHeader("X-Client-Version", com.mbclaw.root.BuildConfig.VERSION_NAME)
             .post(body.toString().toRequestBody("application/json".toMediaType())).build()
 
         val response = http.newCall(request).execute()
