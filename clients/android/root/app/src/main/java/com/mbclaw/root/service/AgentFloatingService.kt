@@ -175,7 +175,17 @@ class AgentFloatingService : Service() {
                 Thread.sleep(800)
             } catch (_: Exception) {}
             if (!canDrawOverlays()) {
-                android.util.Log.w("MBclaw-Float", "悬浮窗权限被拒, 跳过 (通知正常)")
+                android.util.Log.w("MBclaw-Float", "悬浮窗权限被拒")
+                // BugG修复: 通知用户需要手动开启悬浮窗权限
+                try {
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        android.widget.Toast.makeText(
+                            this@AgentFloatingService,
+                            "⚠️ 悬浮窗权限未授予, AI运行中无法显示悬浮窗。请在设置→应用→MBclaw→悬浮窗中手动开启",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                } catch (_: Exception) {}
                 return
             }
         }

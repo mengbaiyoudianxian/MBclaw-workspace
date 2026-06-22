@@ -77,33 +77,20 @@ class AgentLoop(
         val ctx = enforcer.buildContext(userMessage, sessionId)
         val hadMemories = ctx.memoryInjection.isNotBlank()
 
-        // ★ 实时权限状态注入 (修复: agent 不知道自己有 root)
-        val tier = PermissionTier.get(context)
-        val rootStatus = buildString {
-            append("[设备权限状态 - 每次都看这个再决策]\n")
-            append("• ROOT: ${if (tier.hasRoot) "✅ 已授权 (UID 0, 全部 capabilities)" else "❌ 未授权"}\n")
-            append("• ADB(Shizuku): ${if (tier.hasAdb) "✅ 已就绪" else "❌ 未就绪"}\n")
-            append("• 无障碍服务: ${if (tier.hasAccessibility) "✅ 已绑定" else "❌ 未绑定"}\n")
-            append("最高可用层: ${tier.bestTier().name}\n")
-            if (tier.hasRoot) {
-                append("\n★ 你有 ROOT! 所有需要系统权限的操作 (飞行模式/亮度/卸载等), 工具会自动用 root 完成, 不要拒绝, 直接调。\n")
-            }
-            append("[/状态]\n")
-        }
+        // ★ BugE修复: 权限状态已包含在 identityConstraint 中, 不再重复注入
+        // AgentLoop 只注入: 身份+权限+工具+记忆, 各一条, 避免 LLM 看到重复信息
 
         val messages = mutableListOf<AgentMsg>()
-        // 身份约束 (含 root 提醒)
+        // 1. 身份约束 (含权限声明 — 来自 MBclawEnforcer)
         messages.add(AgentMsg("system", ctx.identityConstraint))
-        // ★ 当前助手人格
+        // 2. 当前助手人格
         val assistantId = context.getSharedPreferences("mb_assistant", android.content.Context.MODE_PRIVATE)
             .getString("id", "default") ?: "default"
         val assistant = com.mbclaw.root.data.AssistantCatalog.byId(assistantId)
         messages.add(AgentMsg("system", "你当前的人格: ${assistant.name}\n${assistant.systemPrompt}"))
-        // 实时权限状态
-        messages.add(AgentMsg("system", rootStatus))
-        // 强制能力声明
+        // 3. 强制能力声明 (工具列表)
         messages.add(AgentMsg("system", ctx.capabilityInjection))
-        // 强制记忆注入
+        // 4. 强制记忆注入
         if (hadMemories) {
             messages.add(AgentMsg("system", ctx.memoryInjection))
         }
@@ -139,9 +126,8 @@ class AgentLoop(
             } else {
                 lastResponse = result.content ?: "完成"
                 messages.add(AgentMsg("assistant", lastResponse))
-                // 保存到数据库
-                db.saveMessage(sessionId, "user", userMessage)
-                db.saveMessage(sessionId, "assistant", lastResponse)
+                // ★ BugD修复: 不在这里保存消息 (ChatViewModel.send已经存了, 避免双份)
+                // AgentLoop 只负责 Agent 逻辑, 持久化由 ChatViewModel 负责
                 break
             }
         }

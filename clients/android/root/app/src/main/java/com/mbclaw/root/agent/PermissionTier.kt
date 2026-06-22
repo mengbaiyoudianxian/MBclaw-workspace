@@ -50,14 +50,30 @@ class PermissionTier private constructor(private val context: Context) {
         else             -> Tier.NONE
     }
 
-    /** 执行 su 命令，失败返回 null */
+    /** 执行 su 命令，失败返回 null。超时时返回已捕获的部分输出 */
     fun shellRoot(cmd: String, timeoutMs: Long = 5000): String? {
         if (!hasRoot) return null
         return try {
             val p = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
-            val ok = p.waitFor(timeoutMs / 1000, java.util.concurrent.TimeUnit.SECONDS)
-            if (!ok) { p.destroy(); return null }
-            BufferedReader(InputStreamReader(p.inputStream)).readText().trim()
+            val reader = BufferedReader(InputStreamReader(p.inputStream))
+            val sb = StringBuilder()
+            // BugF修复: 超时时也返回已读取的输出, 不丢结果
+            val deadline = System.currentTimeMillis() + timeoutMs
+            while (System.currentTimeMillis() < deadline) {
+                if (reader.ready()) {
+                    val ch = reader.read()
+                    if (ch == -1) break
+                    sb.append(ch.toChar())
+                } else {
+                    // 检查进程是否已结束
+                    try { p.exitValue(); break } catch (_: IllegalThreadStateException) {}
+                    Thread.sleep(10)
+                }
+            }
+            // 超时则强制 kill
+            try { p.exitValue() } catch (_: IllegalThreadStateException) { p.destroy() }
+            val result = sb.toString().trim()
+            if (result.isBlank()) null else result
         } catch (_: Exception) { null }
     }
 
