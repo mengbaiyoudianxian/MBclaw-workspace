@@ -133,6 +133,7 @@ private fun ChatPage(
     onMenuClick: () -> Unit,
     onInfoClick: () -> Unit,
 ) {
+    var showAssistants by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
@@ -160,10 +161,12 @@ private fun ChatPage(
                     }
                 },
                 actions = {
-                    // bug.4 — 保留 + (新对话), 删除 🗑️
-                    // bug.4 — 智能手不再放这里，转移到设置
                     IconButton(onClick = { vm.newSession() }) {
                         Icon(Icons.Filled.Add, "新对话")
+                    }
+                    // 助手选择
+                    IconButton(onClick = { showAssistants = true }) {
+                        Text("🦊", style = MaterialTheme.typography.titleMedium)
                     }
                     IconButton(onClick = onInfoClick) {
                         Surface(shape = RoundedCornerShape(50),
@@ -184,6 +187,77 @@ private fun ChatPage(
     ) { padding ->
         Box(Modifier.padding(padding)) {
             ChatScreen(vm)
+        }
+    }
+
+    if (showAssistants) {
+        AssistantsSheet(
+            currentId = vm.currentAssistantId.value,
+            onPick = { id ->
+                vm.switchAssistant(id)
+                showAssistants = false
+            },
+            onDismiss = { showAssistants = false },
+        )
+    }
+}
+
+/** 助手选择 Sheet (仿 MiClaw 魔改版聊天列表) */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AssistantsSheet(
+    currentId: String,
+    onPick: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(Modifier.padding(16.dp).fillMaxWidth()) {
+            Text("选择助手", fontWeight = FontWeight.Bold,
+                 style = MaterialTheme.typography.titleLarge)
+            Text("不同助手有不同性格 · 记忆通用",
+                 style = MaterialTheme.typography.labelSmall,
+                 color = MaterialTheme.colorScheme.outline)
+            Spacer(Modifier.height(12.dp))
+            LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp),
+                       verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(com.mbclaw.root.data.AssistantCatalog.ALL) { a ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clickable { onPick(a.id) },
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+                        color = if (a.id == currentId)
+                            MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                    ) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = androidx.compose.foundation.shape.CircleShape,
+                                color = MaterialTheme.colorScheme.surface,
+                                modifier = Modifier.size(40.dp),
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(a.emoji, style = MaterialTheme.typography.titleLarge)
+                                }
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(a.name, fontWeight = FontWeight.SemiBold)
+                                Text(a.systemPrompt.take(40),
+                                     style = MaterialTheme.typography.labelSmall,
+                                     color = MaterialTheme.colorScheme.outline,
+                                     maxLines = 1)
+                            }
+                            if (a.id == currentId) {
+                                Icon(Icons.Filled.Check, "当前",
+                                     tint = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
         }
     }
 }

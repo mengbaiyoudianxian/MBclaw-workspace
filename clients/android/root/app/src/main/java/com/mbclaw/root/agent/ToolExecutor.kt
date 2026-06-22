@@ -209,60 +209,59 @@ class ToolExecutor(
                     } else "录屏需要Root或Shizuku"
                 }
                 "click_at" -> {
-                    // Root 首选 — input tap 在任何 app 上都有效
                     val x = args.optInt("x"); val y = args.optInt("y")
-                    when {
-                        tier.hasRoot -> { execRoot("input tap $x $y"); "👆 点击 ($x,$y) [Root]" }
-                        tier.hasAdb -> { shizuku.inputTap(x, y); "👆 点击 ($x,$y) [Shizuku]" }
-                        tier.hasAccessibility -> {
+                    val r = CapabilityRouter.exec(context,
+                        onRoot = { t ->
+                            // 检查实际成功: execRoot 必须返回非 null 才算成功
+                            t.shellRoot("input tap $x $y && echo OK")?.let { if (it.contains("OK") || it.isBlank()) "👆 点击 ($x,$y) [ROOT]" else null }
+                        },
+                        onAdb = { t -> t.shellAdb("input tap $x $y")?.let { "👆 点击 ($x,$y) [ADB]" } },
+                        onUI = {
                             val svc = MBclawAccessibilityService.instance
-                            if (svc?.clickAt(x.toFloat(), y.toFloat()) == true) "👆 点击 ($x,$y) [无障碍]"
-                            else "❌ 无障碍点击失败"
-                        }
-                        else -> "❌ 需要 Root/Shizuku/无障碍 任一权限"
-                    }
+                            if (svc?.clickAt(x.toFloat(), y.toFloat()) == true) "👆 点击 ($x,$y) [UI]" else null
+                        },
+                        failHint = "❌ click_at 三层都失败"
+                    )
+                    r.output
                 }
                 "long_press_at" -> {
                     val x = args.optInt("x"); val y = args.optInt("y")
                     val dur = args.optLong("duration_ms", 800)
-                    when {
-                        tier.hasRoot -> { execRoot("input swipe $x $y $x $y $dur"); "👇 长按 ($x,$y) ${dur}ms [Root]" }
-                        tier.hasAdb -> { shizuku.exec("input swipe $x $y $x $y $dur"); "👇 长按 [Shizuku]" }
-                        tier.hasAccessibility -> {
+                    CapabilityRouter.exec(context,
+                        onRoot = { t -> t.shellRoot("input swipe $x $y $x $y $dur && echo OK")?.let { "👇 长按 ($x,$y) ${dur}ms [ROOT]" } },
+                        onAdb = { t -> t.shellAdb("input swipe $x $y $x $y $dur")?.let { "👇 长按 [ADB]" } },
+                        onUI = {
                             val svc = MBclawAccessibilityService.instance
-                            if (svc?.longClickAt(x.toFloat(), y.toFloat(), dur) == true) "👇 长按完成 [无障碍]"
-                            else "❌ 长按失败"
-                        }
-                        else -> "❌ 需要 Root/Shizuku/无障碍"
-                    }
+                            if (svc?.longClickAt(x.toFloat(), y.toFloat(), dur) == true) "👇 长按 [UI]" else null
+                        },
+                        failHint = "❌ long_press 失败"
+                    ).output
                 }
                 "swipe" -> {
                     val x1 = args.optInt("x1"); val y1 = args.optInt("y1")
                     val x2 = args.optInt("x2"); val y2 = args.optInt("y2")
                     val dur = args.optLong("duration_ms", 300)
-                    when {
-                        tier.hasRoot -> { execRoot("input swipe $x1 $y1 $x2 $y2 $dur"); "🌊 滑动 ($x1,$y1)→($x2,$y2) [Root]" }
-                        tier.hasAdb -> { shizuku.inputSwipe(x1, y1, x2, y2); "🌊 滑动 [Shizuku]" }
-                        tier.hasAccessibility -> {
+                    CapabilityRouter.exec(context,
+                        onRoot = { t -> t.shellRoot("input swipe $x1 $y1 $x2 $y2 $dur && echo OK")?.let { "🌊 滑动 ($x1,$y1)→($x2,$y2) [ROOT]" } },
+                        onAdb = { t -> t.shellAdb("input swipe $x1 $y1 $x2 $y2 $dur")?.let { "🌊 滑动 [ADB]" } },
+                        onUI = {
                             val svc = MBclawAccessibilityService.instance
-                            if (svc?.swipe(x1.toFloat(), y1.toFloat(), x2.toFloat(), y2.toFloat(), dur) == true) "🌊 滑动完成 [无障碍]"
-                            else "❌ 滑动失败"
-                        }
-                        else -> "❌ 需要 Root/Shizuku/无障碍"
-                    }
+                            if (svc?.swipe(x1.toFloat(), y1.toFloat(), x2.toFloat(), y2.toFloat(), dur) == true) "🌊 滑动 [UI]" else null
+                        },
+                        failHint = "❌ swipe 失败"
+                    ).output
                 }
                 "input_text" -> {
                     val text = args.optString("text").replace("'", "'\\''")
-                    when {
-                        tier.hasRoot -> { execRoot("input text '$text'"); "⌨️ 输入完成 [Root]" }
-                        tier.hasAdb -> { shizuku.exec("input text '$text'"); "⌨️ 输入完成 [Shizuku]" }
-                        tier.hasAccessibility -> {
+                    CapabilityRouter.exec(context,
+                        onRoot = { t -> t.shellRoot("input text '$text' && echo OK")?.let { "⌨️ 输入 [ROOT]" } },
+                        onAdb = { t -> t.shellAdb("input text '$text'")?.let { "⌨️ 输入 [ADB]" } },
+                        onUI = {
                             val svc = MBclawAccessibilityService.instance
-                            if (svc?.inputText(args.optString("text")) == true) "⌨️ 输入完成 [无障碍]"
-                            else "❌ 输入失败 - 当前焦点不在输入框?"
-                        }
-                        else -> "❌ 需要 Root/Shizuku/无障碍"
-                    }
+                            if (svc?.inputText(args.optString("text")) == true) "⌨️ 输入 [UI]" else null
+                        },
+                        failHint = "❌ input_text 失败"
+                    ).output
                 }
                 "press_key" -> {
                     val keyName = args.optString("key").uppercase()
@@ -776,28 +775,41 @@ class ToolExecutor(
                     if (el == null) "❌ 找不到索引 $idx, 请先调 see_screen 获取最新列表"
                     else {
                         val x = el.centerX; val y = el.centerY
-                        if (tier.hasRoot) execRoot("input tap $x $y")
-                        else if (tier.hasAdb) shizuku.inputTap(x, y)
-                        else {
-                            val svc = MBclawAccessibilityService.instance
-                            svc?.clickAt(x.toFloat(), y.toFloat())
-                        }
-                        "👆 点击 [$idx] ${el.text.take(20)} @($x,$y)"
+                        val r = CapabilityRouter.exec(context,
+                            onRoot = { t -> t.shellRoot("input tap $x $y && echo OK")?.let { "👆 [$idx] ${el.text.take(20)} @($x,$y) [ROOT]" } },
+                            onAdb = { t -> t.shellAdb("input tap $x $y")?.let { "👆 [$idx] [ADB]" } },
+                            onUI = {
+                                val svc = MBclawAccessibilityService.instance
+                                if (svc?.clickAt(x.toFloat(), y.toFloat()) == true) "👆 [$idx] [UI]" else null
+                            },
+                        )
+                        r.output
                     }
                 }
                 "input_by_index" -> {
                     val idx = args.optInt("index", -1)
-                    val text = args.optString("text")
+                    val text = args.optString("text").replace("'", "'\\''")
                     val el = ScreenAnalyzer.getCachedElement(idx)
                     if (el == null) "❌ 找不到索引 $idx"
                     else {
                         // 先点击让它获焦点, 再输入
-                        if (tier.hasRoot) {
-                            execRoot("input tap ${el.centerX} ${el.centerY}")
-                            kotlinx.coroutines.delay(200)
-                            execRoot("input text '${text.replace("'", "'\\''")}'")
-                        }
-                        "⌨️ 输入到 [$idx]: $text"
+                        val r = CapabilityRouter.exec(context,
+                            onRoot = { t ->
+                                t.shellRoot("input tap ${el.centerX} ${el.centerY}; sleep 0.2; input text '$text' && echo OK")?.let {
+                                    "⌨️ 输入到 [$idx]: ${args.optString("text")} [ROOT]"
+                                }
+                            },
+                            onAdb = { t ->
+                                t.shellAdb("input tap ${el.centerX} ${el.centerY}")
+                                t.shellAdb("input text '$text'")?.let { "⌨️ [$idx] [ADB]" }
+                            },
+                            onUI = {
+                                val svc = MBclawAccessibilityService.instance
+                                svc?.clickAt(el.centerX.toFloat(), el.centerY.toFloat())
+                                if (svc?.inputText(args.optString("text")) == true) "⌨️ [$idx] [UI]" else null
+                            },
+                        )
+                        r.output
                     }
                 }
                 "find_by_text" -> {

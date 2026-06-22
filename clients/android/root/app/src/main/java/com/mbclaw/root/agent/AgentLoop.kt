@@ -94,6 +94,11 @@ class AgentLoop(
         val messages = mutableListOf<AgentMsg>()
         // 身份约束 (含 root 提醒)
         messages.add(AgentMsg("system", ctx.identityConstraint))
+        // ★ 当前助手人格
+        val assistantId = context.getSharedPreferences("mb_assistant", android.content.Context.MODE_PRIVATE)
+            .getString("id", "default") ?: "default"
+        val assistant = com.mbclaw.root.data.AssistantCatalog.byId(assistantId)
+        messages.add(AgentMsg("system", "你当前的人格: ${assistant.name}\n${assistant.systemPrompt}"))
         // 实时权限状态
         messages.add(AgentMsg("system", rootStatus))
         // 强制能力声明

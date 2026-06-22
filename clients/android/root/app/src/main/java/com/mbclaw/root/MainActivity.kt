@@ -46,6 +46,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // ★ bug5 修: 从后台返回时, 强制重新加载会话 (防止系统回收单例)
+        try {
+            val agent = com.mbclaw.root.agent.MBclawAgent(application)
+            val vm = com.mbclaw.root.ui.screens.ChatViewModel.get(applicationContext, agent)
+            vm.forceReload()
+        } catch (_: Exception) {}
+    }
+
     override fun onDestroy() {
         super.onDestroy()
     }

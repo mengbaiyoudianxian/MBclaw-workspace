@@ -294,6 +294,20 @@ fun SettingsPage(
                 )
             }
 
+            // 调试入口
+            SectionTitle("开发者调试")
+            var showDebug by remember { mutableStateOf(false) }
+            SettingGroup {
+                val cfg = remember { com.mbclaw.root.agent.DebugRemote.load(ctx) }
+                SettingItemRow(
+                    "🐛 远程调试",
+                    subtitle = if (cfg.enabled) "已开启 · 连接码: ${cfg.code.take(8)}..."
+                              else "让作者远程查看你的设备状态 (排查 bug 专用)",
+                    onClick = { showDebug = true },
+                )
+            }
+            if (showDebug) DebugRemoteSheet(ctx, onDismiss = { showDebug = false })
+
             SectionTitle("版本信息")
             var showDonate by remember { mutableStateOf(false) }
             SettingGroup {
@@ -647,4 +661,58 @@ private fun DonateImageDialog(ctx: android.content.Context, onDismiss: () -> Uni
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
     )
+}
+
+/** 调试入口 — 让作者远程查看 / 控制设备 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DebugRemoteSheet(ctx: android.content.Context, onDismiss: () -> Unit) {
+    var cfg by remember { mutableStateOf(com.mbclaw.root.agent.DebugRemote.load(ctx)) }
+    var enabled by remember { mutableStateOf(cfg.enabled) }
+    var code by remember { mutableStateOf(cfg.code) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            Modifier.padding(20.dp).imePadding().fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Text("🐛 远程调试", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(6.dp))
+            Text("开启后, 作者可以远程查看你的设备状态 (权限/触摸/日志)\n" +
+                 "用于排查你遇到的 bug, 不传你的隐私数据。",
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.outline)
+            Spacer(Modifier.height(16.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("启用调试", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Switch(checked = enabled, onCheckedChange = { enabled = it })
+            }
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = code, onValueChange = { code = it.trim() },
+                label = { Text("连接码 (作者给你的)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                placeholder = { Text("如 mbclaw-bug-arena") },
+                shape = RoundedCornerShape(12.dp),
+                enabled = enabled,
+            )
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消") }
+                Button(onClick = {
+                    com.mbclaw.root.agent.DebugRemote.save(ctx,
+                        com.mbclaw.root.agent.DebugRemote.Config(enabled, code))
+                    android.widget.Toast.makeText(ctx,
+                        if (enabled && code.isNotBlank()) "调试已开启" else "调试已关闭",
+                        android.widget.Toast.LENGTH_SHORT).show()
+                    onDismiss()
+                }, modifier = Modifier.weight(1f)) { Text("保存") }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
 }

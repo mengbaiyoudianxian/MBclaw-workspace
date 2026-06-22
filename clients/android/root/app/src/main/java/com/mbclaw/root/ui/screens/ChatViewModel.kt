@@ -26,6 +26,17 @@ class ChatViewModel private constructor(private val ctx: Context, val agent: MBc
     val agentStatus = mutableStateOf("")
     val sessionId = mutableStateOf("")
     val tokenStats = mutableStateOf(TokenStats())
+    val currentAssistantId = mutableStateOf(
+        ctx.getSharedPreferences("mb_assistant", Context.MODE_PRIVATE).getString("id", "default") ?: "default"
+    )
+
+    fun switchAssistant(id: String) {
+        currentAssistantId.value = id
+        ctx.getSharedPreferences("mb_assistant", Context.MODE_PRIVATE)
+            .edit().putString("id", id).apply()
+        val a = com.mbclaw.root.data.AssistantCatalog.byId(id)
+        messages.add(ChatMsg("assistant", "🦊 已切换至「${a.name}」: ${a.systemPrompt.take(50)}"))
+    }
 
     private val agentLoop = AgentLoop(ctx, agent.db, agent.settings)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -39,11 +50,26 @@ class ChatViewModel private constructor(private val ctx: Context, val agent: MBc
             }
     }
 
-    /** 启动恢复：
-     *  - 检测 DB 中会话数 >= 1 → 强制读取最近一条 sessionId, 加载其消息
-     *  - 否则才创建新对话
-     *  - 启动时无论 initialized 是否为 true 都重新跑（防止单例残留旧状态）
-     */
+    /** 强制重新从 DB 加载 — onResume 时调 (修 bug5: 划后台回来对话丢) */
+    fun forceReload() {
+        scope.launch(Dispatchers.IO) {
+            val sessions = try { agent.db.getSessions() } catch (_: Exception) { emptyList() }
+            if (sessions.isEmpty()) return@launch
+            val newest = sessions.first()
+            val rows = agent.db.getMessages(newest.id)
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                if (rows.size > messages.count { it.role != "system" }) {
+                    // DB 比内存多, 重新加载
+                    sessionId.value = newest.id
+                    messages.clear()
+                    rows.forEach { messages.add(ChatMsg(it.role, it.content)) }
+                    if (messages.isEmpty()) messages.add(welcomeMsg())
+                    android.util.Log.i("MBclaw-VM", "forceReload: ${rows.size} msgs from DB")
+                }
+            }
+        }
+    }
+
     fun initIfNeeded() {
         if (initialized && messages.isNotEmpty()) return
         synchronized(this) {
@@ -139,10 +165,21 @@ class ChatViewModel private constructor(private val ctx: Context, val agent: MBc
         val text = inputText.value
         inputText.value = ""
         messages.add(ChatMsg("user", text))
+
+        // ★ bug5 修: 立即存盘, 不等 agent 完成才存
+        val sid = sessionId.value
+        scope.launch(Dispatchers.IO) {
+            try {
+                agent.db.saveMessage(sid, "user", text)
+                android.util.Log.i("MBclaw-VM", "user message persisted to DB: ${text.take(20)}")
+            } catch (e: Exception) {
+                android.util.Log.e("MBclaw-VM", "save user msg failed: ${e.message}")
+            }
+        }
+
         isThinking.value = true
         agentStatus.value = "🤖 启动中…"
 
-        // ★ 启动悬浮窗 + 常驻通知
         com.mbclaw.root.service.AgentFloatingService.start(ctx, "运行")
         registerCancelReceiver()
 
@@ -158,6 +195,12 @@ class ChatViewModel private constructor(private val ctx: Context, val agent: MBc
                     )
                 }
                 messages.add(ChatMsg("assistant", reply))
+                // ★ bug5 修: assistant 回复也立即存盘
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        agent.db.saveMessage(sid, "assistant", reply)
+                    } catch (_: Exception) {}
+                }
                 val inTokens = (text.length / 1.5).toInt()
                 val outTokens = (reply.length / 1.5).toInt()
                 tokenStats.value = tokenStats.value.copy(
@@ -168,6 +211,9 @@ class ChatViewModel private constructor(private val ctx: Context, val agent: MBc
                 )
             } catch (e: Exception) {
                 messages.add(ChatMsg("assistant", "❌ ${e.message}", isError = true))
+                scope.launch(Dispatchers.IO) {
+                    try { agent.db.saveMessage(sid, "assistant", "❌ ${e.message}") } catch (_: Exception) {}
+                }
             }
             isThinking.value = false
             agentStatus.value = ""

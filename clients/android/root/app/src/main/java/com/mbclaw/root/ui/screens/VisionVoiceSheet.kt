@@ -2,7 +2,9 @@ package com.mbclaw.root.ui.screens
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -33,8 +35,17 @@ fun VisionVoiceSheet(
     var aTts by remember { mutableStateOf(settings.voiceTtsModel) }
     var aAsr by remember { mutableStateOf(settings.voiceAsrModel) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface) {
-        Column(Modifier.padding(20.dp).fillMaxWidth()) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            Modifier
+                .padding(20.dp)
+                .imePadding()                          // ★ 输入法弹出时上浮
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+        ) {
             Text("扩展能力配置", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(4.dp))
             Text("主模型不支持时使用专配 Key", style = MaterialTheme.typography.labelSmall,

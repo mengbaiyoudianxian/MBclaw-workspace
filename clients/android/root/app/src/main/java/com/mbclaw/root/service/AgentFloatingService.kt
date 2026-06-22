@@ -198,29 +198,45 @@ class AgentFloatingService : Service() {
             orientation = LinearLayout.HORIZONTAL
             background = bg
             setPadding(padH, padV, padH, padV)
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        // ┌─ [⏸ 停止按钮] [走马灯] ─┐
+        // 停止按钮 - 100% 触发暂停
+        val stopBtn = TextView(this).apply {
+            text = "⏸"
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            setPadding(dp(4), 0, dp(8), 0)
+            val btnBg = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0x66FF3B30)   // 半透明红
+                setStroke(dp(1), 0x88FFFFFF.toInt())
+            }
+            background = btnBg
             gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(dp(28), dp(28)).apply {
+                marginEnd = dp(6)
+            }
             setOnClickListener {
                 startService(Intent(this@AgentFloatingService, AgentFloatingService::class.java)
                     .apply { action = ACTION_CANCEL_FROM_FLOAT })
             }
         }
+        layout.addView(stopBtn)
 
         // ScrollView 做走马灯
         val sv = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_NEVER
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            )
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         statusText = TextView(this).apply {
-            text = "AI 运行中  点击可终止  "  // 初始文本
+            text = "AI 运行中  点击可终止  "
             textSize = 14f
             setTextColor(Color.WHITE)
             includeFontPadding = false
             setPadding(0, dp(2), 0, dp(2))
-            // 让文本能横向无限延伸
             setSingleLine(true)
             isHorizontalFadingEdgeEnabled = false
         }
@@ -239,10 +255,33 @@ class AgentFloatingService : Service() {
                 or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT,
         ).apply {
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            // 下 1/3: 屏幕高 * 2/3
+            gravity = Gravity.TOP or Gravity.START
+            x = (dm.widthPixels - widthPx) / 2   // 默认水平居中
             y = (dm.heightPixels * 0.66).toInt()
         }
+
+        // ★ 拖动逻辑 — 按住非按钮区域拖动
+        sv.setOnTouchListener(object : View.OnTouchListener {
+            var initialX = 0; var initialY = 0
+            var touchX = 0f; var touchY = 0f
+            override fun onTouch(v: View, e: android.view.MotionEvent): Boolean {
+                when (e.action) {
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        initialX = params.x; initialY = params.y
+                        touchX = e.rawX; touchY = e.rawY
+                        return true
+                    }
+                    android.view.MotionEvent.ACTION_MOVE -> {
+                        params.x = (initialX + (e.rawX - touchX)).toInt()
+                        params.y = (initialY + (e.rawY - touchY)).toInt()
+                        try { windowManager?.updateViewLayout(floatingView, params) } catch (_: Exception) {}
+                        return true
+                    }
+                }
+                return false
+            }
+        })
+
         try {
             windowManager?.addView(layout, params)
             floatingView = layout
