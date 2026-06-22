@@ -566,9 +566,13 @@ private fun MBclawVersionRow(ctx: android.content.Context) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val backend = com.mbclaw.root.data.Endpoints.backend(ctx)
-                val u = java.net.URL("${backend.trimEnd('/')}/admin/client/version?current=$current")
+                // 加时间戳防缓存
+                val ts = System.currentTimeMillis()
+                val u = java.net.URL("${backend.trimEnd('/')}/admin/client/version?current=$current&_t=$ts")
                 val conn = u.openConnection() as java.net.HttpURLConnection
                 conn.connectTimeout = 5000
+                conn.setRequestProperty("Cache-Control", "no-cache, no-store")
+                conn.setRequestProperty("Pragma", "no-cache")
                 val txt = conn.inputStream.bufferedReader().readText()
                 val j = org.json.JSONObject(txt)
                 val ver = j.optString("latest", current)
@@ -587,9 +591,11 @@ private fun MBclawVersionRow(ctx: android.content.Context) {
 
     Row(
         Modifier.fillMaxWidth().clickable {
-            // 点击 = 跳下载页
-            val url = if (downloadUrl.startsWith("http")) downloadUrl
+            // 点击 = 跳下载页, 带时间戳防系统下载器缓存
+            val rawUrl = if (downloadUrl.startsWith("http")) downloadUrl
                       else com.mbclaw.root.data.Endpoints.download(ctx)
+            val url = if (rawUrl.contains("?")) "$rawUrl&_t=${System.currentTimeMillis()}"
+                      else "$rawUrl?_t=${System.currentTimeMillis()}"
             val i = android.content.Intent(android.content.Intent.ACTION_VIEW,
                 android.net.Uri.parse(url))
                 .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)

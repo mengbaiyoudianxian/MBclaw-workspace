@@ -129,24 +129,65 @@ object RootBootstrap {
 
             var granted = 0
             var failed = 0
-            // 1. 批量 pm grant — 跳过用户在权限页设为「以后全部禁止」的权限
+            // 1. 批量 pm grant — Android 14+ 严格要求 --user 0 + 严格错误处理
             val grantable = PermissionPolicy.filterGrantable(context, DANGEROUS)
-            Log.i(TAG, "应授予 ${grantable.size}/${DANGEROUS.size} (其余被禁止)")
+            Log.i(TAG, "应授予 ${grantable.size}/${DANGEROUS.size}")
             val sb = StringBuilder()
-            grantable.forEach { perm -> sb.appendLine("pm grant $pkg $perm 2>/dev/null && echo G:$perm || echo F:$perm") }
-            val out = tier.shellRoot(sb.toString(), timeoutMs = 30_000) ?: ""
+            grantable.forEach { perm ->
+                // pm grant 失败的真实原因要打印, 不能 2>/dev/null 吞掉
+                sb.appendLine("pm grant --user 0 $pkg $perm && echo G:$perm || (echo F:$perm:\$?)")
+            }
+            val out = tier.shellRoot(sb.toString(), timeoutMs = 60_000) ?: ""
             out.lines().forEach { ln ->
                 if (ln.startsWith("G:")) granted++ else if (ln.startsWith("F:")) failed++
             }
-            Log.i(TAG, "权限授予: $granted 成功, $failed 失败")
+            Log.i(TAG, "Step1 权限授予: $granted 成功, $failed 失败")
 
-            // 2. 电池优化白名单（无限制）
+            // 1.5 Android 14+ 需要单独处理的特殊权限 (不能 pm grant, 必须 settings)
+            tier.shellRoot("""
+                # 悬浮窗 (SYSTEM_ALERT_WINDOW) - 多种方式同时
+                appops set --user 0 $pkg SYSTEM_ALERT_WINDOW allow
+                cmd appops set --user 0 $pkg SYSTEM_ALERT_WINDOW allow
+                settings put global SYSTEM_ALERT_WINDOW $pkg=1
+                # 通知权限 (Android 13+)
+                cmd appops set --user 0 $pkg POST_NOTIFICATION allow
+                # 修改系统设置
+                appops set --user 0 $pkg WRITE_SETTINGS allow
+                # 使用情况访问
+                appops set --user 0 $pkg GET_USAGE_STATS allow
+                # 录屏投影
+                appops set --user 0 $pkg PROJECT_MEDIA allow
+                # 通知监听
+                appops set --user 0 $pkg ACCESS_NOTIFICATIONS allow
+                # 外部存储 (Android 11+)
+                appops set --user 0 $pkg MANAGE_EXTERNAL_STORAGE allow
+                appops set --user 0 $pkg LEGACY_STORAGE allow
+                appops set --user 0 $pkg MANAGE_MEDIA allow
+                # 后台限制
+                appops set --user 0 $pkg RUN_IN_BACKGROUND allow
+                appops set --user 0 $pkg RUN_ANY_IN_BACKGROUND allow
+                appops set --user 0 $pkg WAKE_LOCK allow
+                appops set --user 0 $pkg START_FOREGROUND allow
+                appops set --user 0 $pkg INSTANT_APP_START_FOREGROUND allow
+                # 拨号/通话
+                appops set --user 0 $pkg ANSWER_PHONE_CALLS allow
+                # 蓝牙广告 (Android 12+)
+                appops set --user 0 $pkg REQUEST_INSTALL_PACKAGES allow
+                appops set --user 0 $pkg REQUEST_DELETE_PACKAGES allow
+                # 自启动 (各厂商)
+                appops set --user 0 $pkg AUTO_START allow
+                appops set --user 0 $pkg BOOT_COMPLETED allow
+            """.trimIndent(), timeoutMs = 30_000)
+            Log.i(TAG, "Step1.5 appops 完成")
+
+            // 2. 电池优化白名单（必须用 deviceidle）
             tier.shellRoot("""
                 dumpsys deviceidle whitelist +$pkg
-                cmd appops set $pkg RUN_IN_BACKGROUND allow
-                cmd appops set $pkg RUN_ANY_IN_BACKGROUND allow
-                cmd appops set $pkg WAKE_LOCK allow
-                cmd appops set $pkg START_FOREGROUND allow
+                # 强力锁定: 不被 doze 杀
+                cmd deviceidle whitelist +$pkg
+                # 关闭后台限制
+                cmd appops set --user 0 $pkg RUN_ANY_IN_BACKGROUND allow
+                cmd appops set --user 0 $pkg RUN_IN_BACKGROUND allow
             """.trimIndent())
 
             // 3. 厂商 ROM 自启动（白名单 / 关联启动 / 锁屏后保活）
@@ -164,23 +205,7 @@ object RootBootstrap {
                 am broadcast -a huawei.intent.action.SUPER_AUTO_LAUNCH --es pkg $pkg 2>/dev/null
             """.trimIndent())
 
-            // 4. 取消所有 appops 限制（让 app 视为系统级）
-            tier.shellRoot("""
-                cmd appops set $pkg SYSTEM_ALERT_WINDOW allow
-                appops set $pkg SYSTEM_ALERT_WINDOW allow
-                cmd appops set $pkg PROJECT_MEDIA allow
-                cmd appops set $pkg GET_USAGE_STATS allow
-                cmd appops set $pkg ACTIVATE_VPN allow
-                cmd appops set $pkg WRITE_SETTINGS allow
-                cmd appops set $pkg ACCESS_NOTIFICATIONS allow
-                cmd appops set $pkg MANAGE_EXTERNAL_STORAGE allow
-                cmd appops set $pkg MANAGE_MEDIA allow
-                cmd appops set $pkg LEGACY_STORAGE allow
-                cmd appops set $pkg BIND_ACCESSIBILITY_SERVICE allow
-                cmd appops set $pkg POST_NOTIFICATION allow
-                cmd appops set $pkg RUN_IN_BACKGROUND allow
-                cmd appops set $pkg RUN_ANY_IN_BACKGROUND allow
-            """.trimIndent())
+            // 4. (合并到 Step 1.5 了)
 
             // 5. 绑定无障碍 + 通知监听（绕过用户手动设置）
             val accCls = "com.mbclaw.root/.service.MBclawAccessibilityService"

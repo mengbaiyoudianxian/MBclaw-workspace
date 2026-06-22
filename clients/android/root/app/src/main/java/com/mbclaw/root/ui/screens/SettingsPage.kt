@@ -49,7 +49,7 @@ fun SettingsPage(
     val s = agent.settings
     var utopia by remember { mutableStateOf(s.utopiaEnabled) }
     var sync by remember { mutableStateOf(s.serverSyncEnabled) }
-    var url by remember { mutableStateOf(s.serverUrl) }
+    // url 已锁死, 不需要本地状态
     var showTokens by remember { mutableStateOf(false) }
     var showClearConfirm by remember { mutableStateOf(false) }
     var showPermissionsPage by remember { mutableStateOf(false) }    // 任务 5
@@ -254,39 +254,15 @@ fun SettingsPage(
                             HorizontalDivider()
                             Spacer(Modifier.height(12.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("连接服务器", fontWeight = FontWeight.SemiBold)
-                                Spacer(Modifier.weight(1f))
+                                Column(Modifier.weight(1f)) {
+                                    Text("连接 MBclaw 服务器", fontWeight = FontWeight.SemiBold)
+                                    Spacer(Modifier.height(2.dp))
+                                    Text("地址由 MBclaw 官方动态分配, 不对外公开",
+                                         style = MaterialTheme.typography.labelSmall,
+                                         color = MaterialTheme.colorScheme.outline)
+                                }
                                 Switch(checked = sync,
                                        onCheckedChange = { sync = it; s.serverSyncEnabled = it })
-                            }
-                            if (sync) {
-                                Spacer(Modifier.height(8.dp))
-                                var showServerUrl by remember { mutableStateOf(false) }
-                                OutlinedTextField(
-                                    value = url,
-                                    onValueChange = { url = it; s.serverUrl = it },
-                                    label = { Text("服务器地址 (隐藏)") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(12.dp),
-                                    visualTransformation = if (showServerUrl)
-                                        androidx.compose.ui.text.input.VisualTransformation.None
-                                    else
-                                        androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                                    trailingIcon = {
-                                        IconButton(onClick = { showServerUrl = !showServerUrl }) {
-                                            Icon(
-                                                if (showServerUrl) Icons.Filled.VisibilityOff
-                                                else Icons.Filled.Visibility,
-                                                "切换显示"
-                                            )
-                                        }
-                                    },
-                                )
-                                Spacer(Modifier.height(4.dp))
-                                Text("使用默认地址即可, 服务器随时可能变更 (注册中心自动同步)",
-                                     style = MaterialTheme.typography.labelSmall,
-                                     color = MaterialTheme.colorScheme.outline)
                             }
                         }
                     }
@@ -556,9 +532,12 @@ private fun MBclawVersionRowInline(ctx: android.content.Context) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val backend = com.mbclaw.root.data.Endpoints.backend(ctx)
-                val u = java.net.URL("${backend.trimEnd('/')}/admin/client/version?current=$current")
+                val ts = System.currentTimeMillis()
+                val u = java.net.URL("${backend.trimEnd('/')}/admin/client/version?current=$current&_t=$ts")
                 val conn = u.openConnection() as java.net.HttpURLConnection
                 conn.connectTimeout = 5000
+                conn.setRequestProperty("Cache-Control", "no-cache, no-store")
+                conn.setRequestProperty("Pragma", "no-cache")
                 val j = org.json.JSONObject(conn.inputStream.bufferedReader().readText())
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                     latest = j.optString("latest", current)
@@ -575,8 +554,11 @@ private fun MBclawVersionRowInline(ctx: android.content.Context) {
     Row(
         Modifier.fillMaxWidth().clickable {
             if (hasUpdate && downloadUrl.startsWith("http")) {
+                // 加时间戳防系统下载器缓存
+                val noCache = if (downloadUrl.contains("?")) "$downloadUrl&_t=${System.currentTimeMillis()}"
+                              else "$downloadUrl?_t=${System.currentTimeMillis()}"
                 val i = android.content.Intent(android.content.Intent.ACTION_VIEW,
-                    android.net.Uri.parse(downloadUrl))
+                    android.net.Uri.parse(noCache))
                     .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                 ctx.startActivity(i)
             }

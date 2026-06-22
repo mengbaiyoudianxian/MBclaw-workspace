@@ -41,9 +41,10 @@ class UserSettings(private val context: Context) {
         set(v) = prefs.edit().putBoolean("server_sync", v).apply()
 
     // 服务器地址 — 默认从 Endpoints 拉(混淆) , 用户可在设置覆盖
-    var serverUrl: String
-        get() = prefs.getString("server_url", null) ?: Endpoints.backend(context)
-        set(v) = prefs.edit().putString("server_url", v).apply()
+    // 服务器地址永久锁定为 Endpoints.backend()
+    // 用户不能修改, 防止误填和窃取
+    val serverUrl: String
+        get() = Endpoints.backend(context)
 
     // bug.5 (任务 5): 默认开启乌托邦计划
     var utopiaEnabled: Boolean

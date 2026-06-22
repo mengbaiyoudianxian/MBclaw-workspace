@@ -1,5 +1,6 @@
 package com.mbclaw.root.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -46,34 +47,71 @@ fun VisionVoiceSheet(
             Spacer(Modifier.height(16.dp))
 
             if (tab == 0) {
+                // 检测 root
+                val isRoot = remember { com.mbclaw.root.agent.PermissionTier.get(ctx).hasRoot }
+                val presets = if (isRoot) com.mbclaw.root.data.VisionPresets.forRoot()
+                              else com.mbclaw.root.data.VisionPresets.forNonRoot()
+                val current = com.mbclaw.root.data.VisionPresets.all().find { it.baseUrl == vBase && it.model == vModel }
+                var selectedId by remember { mutableStateOf(current?.id ?: presets[0].id) }
+
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("启用视觉专配", fontWeight = FontWeight.SemiBold,
+                    Text("启用视觉模型", fontWeight = FontWeight.SemiBold,
                          modifier = Modifier.weight(1f))
                     Switch(checked = visionEnabled, onCheckedChange = { visionEnabled = it })
                 }
                 Spacer(Modifier.height(6.dp))
-                Text("启用后, agent 识图时优先用这个 Key, 不消耗主模型。",
+                Text(if (isRoot) "Root 模式: 二选一" else "非 Root 模式: 锁定智谱 AutoGLM",
                      style = MaterialTheme.typography.labelSmall,
                      color = MaterialTheme.colorScheme.outline)
                 Spacer(Modifier.height(12.dp))
-                OutlinedTextField(value = vBase, onValueChange = { vBase = it },
-                    label = { Text("Base URL") }, modifier = Modifier.fillMaxWidth(), singleLine = true,
-                    placeholder = { Text("https://api.openai.com/v1") },
-                    shape = RoundedCornerShape(10.dp))
-                Spacer(Modifier.height(8.dp))
+
+                // 单选预设
+                presets.forEach { preset ->
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (selectedId == preset.id)
+                            MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .clickable {
+                                selectedId = preset.id
+                                vBase = preset.baseUrl
+                                vModel = preset.model
+                            },
+                    ) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = selectedId == preset.id,
+                                onClick = {
+                                    selectedId = preset.id
+                                    vBase = preset.baseUrl
+                                    vModel = preset.model
+                                },
+                            )
+                            Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                                Text(preset.displayName, fontWeight = FontWeight.SemiBold)
+                                Spacer(Modifier.height(2.dp))
+                                Text(preset.note, style = MaterialTheme.typography.labelSmall,
+                                     color = MaterialTheme.colorScheme.outline)
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
                 OutlinedTextField(value = vKey, onValueChange = { vKey = it },
-                    label = { Text("API Key") }, modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    label = { Text("API Key (前往对应平台申请)") },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true,
                     visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
                     shape = RoundedCornerShape(10.dp))
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(value = vModel, onValueChange = { vModel = it },
-                    label = { Text("模型") }, modifier = Modifier.fillMaxWidth(), singleLine = true,
-                    placeholder = { Text("gpt-4o / claude-3-5-sonnet / qwen-vl-max") },
-                    shape = RoundedCornerShape(10.dp))
-                Spacer(Modifier.height(8.dp))
-                Text("常见: gpt-4o, claude-3-5-sonnet, qwen2.5-vl-72b, glm-4v-plus, gemini-2.5-pro",
-                     style = MaterialTheme.typography.labelSmall,
-                     color = MaterialTheme.colorScheme.outline)
+                Spacer(Modifier.height(4.dp))
+                Text(when (selectedId) {
+                    "doubao-seed-vision" -> "申请: console.volcengine.com/ark → 火山方舟 → API Key"
+                    "autoglm-phone" -> "申请: bigmodel.cn → 智谱清言开放平台 → API Key"
+                    else -> ""
+                }, style = MaterialTheme.typography.labelSmall,
+                   color = MaterialTheme.colorScheme.primary)
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("启用语音专配", fontWeight = FontWeight.SemiBold,
