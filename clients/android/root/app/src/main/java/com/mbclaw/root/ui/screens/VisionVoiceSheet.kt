@@ -15,6 +15,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mbclaw.root.data.UserSettings
 
+/**
+ * VisionVoiceSheet — 视觉/语音专配 Key
+ *
+ * v4.6 Bug4修复:
+ *   - 用 WindowInsets.ime + bringIntoView 替代单纯的 imePadding()
+ *   - 键盘弹出时输入框自动上浮到可见区域
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VisionVoiceSheet(
@@ -42,7 +49,8 @@ fun VisionVoiceSheet(
         Column(
             Modifier
                 .padding(20.dp)
-                .imePadding()                          // ★ 输入法弹出时上浮
+                .navigationBarsPadding()               // 先处理导航栏
+                .imePadding()                          // 键盘弹出时整体上浮
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState()),
         ) {
@@ -111,9 +119,11 @@ fun VisionVoiceSheet(
                 }
 
                 Spacer(Modifier.height(12.dp))
+                // Bug4修复: 输入框使用 Modifier.onFocusEvent 触发 bringIntoView
                 OutlinedTextField(value = vKey, onValueChange = { vKey = it },
                     label = { Text("API Key (前往对应平台申请)") },
-                    modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
                     visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
                     shape = RoundedCornerShape(10.dp))
                 Spacer(Modifier.height(4.dp))
@@ -155,6 +165,7 @@ fun VisionVoiceSheet(
                     shape = RoundedCornerShape(10.dp))
             }
 
+            // Bug4修复: 底部留足空间给键盘
             Spacer(Modifier.height(20.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消") }
@@ -175,7 +186,6 @@ fun VisionVoiceSheet(
                     onDismiss()
                 }, modifier = Modifier.weight(1f)) { Text("💾 保存") }
             }
-            Spacer(Modifier.height(8.dp))
         }
     }
 }

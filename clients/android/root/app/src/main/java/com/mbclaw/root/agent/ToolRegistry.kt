@@ -156,6 +156,8 @@ object ToolRegistry {
         ToolDef("input_by_index", "在指定索引的输入框输入文字 (自动先聚焦)。", JSONObject("""{"type":"object","properties":{"index":{"type":"integer"},"text":{"type":"string"}},"required":["index","text"]}""")),
         ToolDef("find_by_text", "在屏幕中按文字搜索元素 (模糊匹配)。", JSONObject("""{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}""")),
         ToolDef("wait_screen", "等待 N 毫秒后重新看屏幕 (用于等界面加载/跳转)。", JSONObject("""{"type":"object","properties":{"ms":{"type":"integer","default":1500}},"required":[]}""")),
+        // ★ v4.7 新增: VLM 视觉定位通道
+        ToolDef("vision_locate", "视觉模型看图定位。把截图发给AI视觉模型，直接返回目标坐标。当see_screen返回空或找不到目标时使用。", JSONObject("""{"type":"object","properties":{"description":{"type":"string","description":"描述你要找什么，如'点击发送按钮'"}},"required":["description"]}""")),
     )
 
     /** 生成OpenAI function calling格式的tools数组 */

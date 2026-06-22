@@ -202,21 +202,22 @@ class AgentFloatingService : Service() {
         }
 
         // ┌─ [⏸ 停止按钮] [走马灯] ─┐
-        // 停止按钮 - 100% 触发暂停
+        // 停止按钮 - 方形 [⏹] 100% 触发暂停
         val stopBtn = TextView(this).apply {
-            text = "⏸"
-            textSize = 18f
+            text = "⏹"
+            textSize = 20f
             setTextColor(Color.WHITE)
-            setPadding(dp(4), 0, dp(8), 0)
+            setPadding(dp(2), 0, dp(6), 0)
             val btnBg = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(0x66FF3B30)   // 半透明红
-                setStroke(dp(1), 0x88FFFFFF.toInt())
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(6).toFloat()
+                setColor(0xCCFF3B30)   // 80% 不透明红, 更显眼
+                setStroke(dp(1.5f), 0xFFFFFFFF.toInt())
             }
             background = btnBg
             gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(dp(28), dp(28)).apply {
-                marginEnd = dp(6)
+            layoutParams = LinearLayout.LayoutParams(dp(30), dp(30)).apply {
+                marginEnd = dp(8)
             }
             setOnClickListener {
                 startService(Intent(this@AgentFloatingService, AgentFloatingService::class.java)

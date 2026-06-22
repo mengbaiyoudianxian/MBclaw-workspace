@@ -7,21 +7,22 @@ import kotlinx.coroutines.*
 import kotlin.math.abs
 
 /**
- * 智能体之手 — 主编排器
+ * 智能体之手 — 主编排器 (v4.7 双通道版)
  *
- * 完整工作流:
- *   输入: (截图base64, 操作描述, 精度要求)
- *     → 检查DNA记忆 → 模糊点击 → 粗筛 → 精定位 → 融合决策 → 执行 → 验证 → 记录
- *   输出: (操作类型, 目标坐标, 置信度)
+ * 通道1 (快速): 关键词 + 历史记忆 → FuzzyClicker
+ * 通道2 (精确): 截图 → VisionLocator → VLM 看图给坐标
+ *
+ * 工作流:
+ *   输入: (截图base64, 操作描述)
+ *     → 检查DNA记忆 → 关键词匹配 → VLM视觉定位 → 执行 → 验证 → 记录
+ *   输出: HandOutput
  */
-
 class AgentHand(
     private val context: Context,
     private val settings: UserSettings,
     private val mode: HandMode = HandMode.BALANCE,
-    private val executor: (Point) -> Boolean,  // 点击执行器: 接收物理坐标, 返回是否成功
+    private val executor: (Point) -> Boolean,
 ) {
-
     private val config = when (mode) {
         HandMode.SPEED -> HandConfig.speed()
         HandMode.BALANCE -> HandConfig.balance()
@@ -31,8 +32,7 @@ class AgentHand(
     val calibration = ScreenCalibration(context)
     private val fuzzyClicker = FuzzyClicker()
     val memory = OperationMemory(context)
-    private val blockRecognizer = BlockRecognizer(settings, config)
-    private val fusionDecider = FusionDecider(config, calibration.screenSize.x, calibration.screenSize.y)
+    private val blockRecognizer = BlockRecognizer(context, settings, config, fuzzyClicker, memory)
 
     data class HandInput(
         val screenshotBase64: String,
@@ -43,130 +43,127 @@ class AgentHand(
 
     data class HandOutput(
         val success: Boolean,
-        val operationType: String,     // "tap" | "long_press" | "swipe" | "input"
-        val normalizedX: Int,
-        val normalizedY: Int,
-        val physicalX: Int,
-        val physicalY: Int,
+        val operationType: String,
+        val normalizedX: Int, val normalizedY: Int,
+        val physicalX: Int, val physicalY: Int,
         val confidence: Float,
-        val methodUsed: String,        // "memory" | "fuzzy" | "fine" | "coarse" | "fusion" | "fallback"
-        val duration: Long,            // 总耗时ms
-        val errorReason: String = "",  // 失败时填
+        val methodUsed: String,
+        val duration: Long,
+        val errorReason: String = "",
     )
 
     // ── 主编排 ──
 
     suspend fun execute(input: HandInput): HandOutput = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
-        val screenSig = memory.screenSignature(input.packageName, calibration.screenSize.x, calibration.screenSize.y, input.layoutHash)
+        val screenSig = memory.screenSignature(
+            input.packageName, calibration.screenSize.x, calibration.screenSize.y, input.layoutHash
+        )
 
         try {
-            // ═══ STEP 0: 检查DNA记忆 ═══
+            // ═══ STEP 0: DNA 记忆快速命中 ═══
             val historicalOp = memory.findSimilar(screenSig, input.operationDesc)
             if (historicalOp != null && historicalOp.confidence >= 0.85f) {
                 val phys = calibration.normalizedToPhysical(historicalOp.x, historicalOp.y)
                 val ok = executor(phys)
                 val elapsed = System.currentTimeMillis() - startTime
                 memory.record(OperationMemory.OpRecord(
-                    sessionId = "hand_${startTime}", deviceId = calibration.screenSize.toString(),
+                    sessionId = "hand_$startTime", deviceId = calibration.screenSize.toString(),
                     screenSignature = screenSig, operationDesc = input.operationDesc,
                     methodUsed = "memory", x = historicalOp.x, y = historicalOp.y,
                     success = ok, confidence = historicalOp.confidence,
                 ))
-                return@withContext HandOutput(ok, "tap", historicalOp.x, historicalOp.y, phys.x, phys.y,
-                    historicalOp.confidence, "memory", elapsed)
+                return@withContext HandOutput(ok, "tap", historicalOp.x, historicalOp.y,
+                    phys.x, phys.y, historicalOp.confidence, "memory", elapsed)
             }
 
-            // ═══ STEP 1: 三条通道并行启动 ═══
-
-            // 通道A: 快速模糊点击
-            val fuzzyResult = if (config.fuzzyEnabled) {
-                var fuzzy = fuzzyClicker.matchKeyword(input.operationDesc)
-                if (fuzzy == null || fuzzy.confidence < config.fuzzyThreshold) {
-                    fuzzy = fuzzyClicker.matchHistorical(screenSig, input.operationDesc, memory)
-                }
-                fuzzy
-            } else null
-
-            // 通道B: 区块识别
-            val coarseResults = blockRecognizer.coarseLocate(input.screenshotBase64, input.operationDesc)
-
-            // 通道C: 精定位
-            val fineResults = if (coarseResults.isNotEmpty()) {
-                blockRecognizer.fineLocate(input.screenshotBase64, input.operationDesc, coarseResults, config.fineRounds)
-            } else {
-                // 粗筛失败 → 降级: 全屏直接定位
-                val fallback = blockRecognizer.fullScreenLocate(input.screenshotBase64, input.operationDesc)
-                if (fallback != null) listOf(fallback) else emptyList()
-            }
-
-            // ═══ STEP 2: 三维融合决策 ═══
-            val decision = fusionDecider.decide(fuzzyResult, fineResults, coarseResults)
-            if (!decision.executed) {
-                val elapsed = System.currentTimeMillis() - startTime
-                return@withContext HandOutput(false, "tap", 0, 0, 0, 0, 0f, "fusion_failed", elapsed, decision.reason)
-            }
-
-            // ═══ STEP 3: 执行 + 验证 + 重试 ═══
-            val normPoint = Point(decision.normalizedX, decision.normalizedY)
-            val physPoint = calibration.normalizedToPhysical(normPoint.x, normPoint.y)
-
-            var success = executor(physPoint)
-            var retries = 0
-            var retryPoint = physPoint
-
-            while (!success && retries < config.maxRetries) {
-                // 小范围偏移重试
-                val offset = config.retryOffsetPx * (retries + 1)
-                val offsets = listOf(
-                    Point(retryPoint.x + offset, retryPoint.y),
-                    Point(retryPoint.x - offset, retryPoint.y),
-                    Point(retryPoint.x, retryPoint.y + offset),
-                    Point(retryPoint.x, retryPoint.y - offset),
-                )
-                for (off in offsets) {
-                    success = executor(off)
-                    if (success) { retryPoint = off; break }
-                }
-                retries++
-            }
-
-            // ═══ STEP 4: 记录 + 反馈 ═══
-            val elapsed = System.currentTimeMillis() - startTime
-            val recordX = calibration.physicalToNormalized(retryPoint.x, retryPoint.y)
-            memory.record(OperationMemory.OpRecord(
-                sessionId = "hand_$startTime", deviceId = calibration.screenSize.toString(),
-                screenSignature = screenSig, operationDesc = input.operationDesc,
-                methodUsed = decision.method, x = recordX.x, y = recordX.y,
-                success = success, confidence = decision.confidence,
-            ))
-
-            // 成功 → 学习关键词
-            if (success) {
-                fuzzyClicker.learnKeyword(input.operationDesc)
-                // 自动微调偏移
-                if (config.autoCalibrate) {
-                    calibration.recordDeviation(normPoint.x, normPoint.y, retryPoint.x, retryPoint.y)
+            // ═══ STEP 1: 通道1 — 关键词模糊匹配 ═══
+            var fuzzyResult: FuzzyClicker.FuzzyResult? = null
+            if (config.fuzzyEnabled) {
+                fuzzyResult = fuzzyClicker.matchKeyword(input.operationDesc)
+                if (fuzzyResult == null || (fuzzyResult.confidence < config.fuzzyThreshold)) {
+                    fuzzyResult = fuzzyClicker.matchHistorical(screenSig, input.operationDesc, memory)
                 }
             }
 
-            HandOutput(
-                success = success,
-                operationType = "tap",
-                normalizedX = recordX.x, normalizedY = recordX.y,
-                physicalX = retryPoint.x, physicalY = retryPoint.y,
-                confidence = decision.confidence,
-                methodUsed = "${decision.method}_r${retries}",
-                duration = elapsed,
-                errorReason = if (!success) "重试${retries}次后仍失败" else "",
+            // 如果关键词高置信度命中且有历史坐标 → 直接执行
+            if (fuzzyResult != null && fuzzyResult.confidence >= config.fuzzyThreshold) {
+                // 尝试从历史获取坐标
+                val hist = memory.findSimilar(screenSig, input.operationDesc)
+                if (hist != null && hist.confidence >= 0.8f) {
+                    val phys = calibration.normalizedToPhysical(hist.x, hist.y)
+                    val ok = executor(phys)
+                    val elapsed = System.currentTimeMillis() - startTime
+                    return@withContext HandOutput(ok, "tap", hist.x, hist.y,
+                        phys.x, phys.y, hist.confidence, "fuzzy_history", elapsed)
+                }
+            }
+
+            // ═══ STEP 2: 通道2 — VLM 视觉定位 (核心) ═══
+            val vlmTarget = blockRecognizer.fullScreenLocate(
+                input.screenshotBase64, input.operationDesc
             )
+
+            if (vlmTarget != null && vlmTarget.confidence >= config.minConfidence) {
+                val phys = calibration.normalizedToPhysical(vlmTarget.normalizedX, vlmTarget.normalizedY)
+                var success = executor(phys)
+                var retries = 0
+
+                // 失败时微调重试
+                while (!success && retries < config.maxRetries) {
+                    val offset = config.retryOffsetPx * (retries + 1)
+                    val offsets = listOf(
+                        Point(phys.x + offset, phys.y),
+                        Point(phys.x - offset, phys.y),
+                        Point(phys.x, phys.y + offset),
+                        Point(phys.x, phys.y - offset),
+                    )
+                    for (off in offsets) {
+                        success = executor(off)
+                        if (success) break
+                    }
+                    retries++
+                }
+
+                val elapsed = System.currentTimeMillis() - startTime
+                memory.record(OperationMemory.OpRecord(
+                    sessionId = "hand_$startTime", deviceId = calibration.screenSize.toString(),
+                    screenSignature = screenSig, operationDesc = input.operationDesc,
+                    methodUsed = vlmTarget.method, x = vlmTarget.normalizedX, y = vlmTarget.normalizedY,
+                    success = success, confidence = vlmTarget.confidence,
+                ))
+
+                if (success) {
+                    fuzzyClicker.learnKeyword(input.operationDesc)
+                    if (config.autoCalibrate) {
+                        calibration.recordDeviation(
+                            vlmTarget.normalizedX, vlmTarget.normalizedY, phys.x, phys.y
+                        )
+                    }
+                }
+
+                return@withContext HandOutput(
+                    success = success, operationType = "tap",
+                    normalizedX = vlmTarget.normalizedX, normalizedY = vlmTarget.normalizedY,
+                    physicalX = phys.x, physicalY = phys.y,
+                    confidence = vlmTarget.confidence,
+                    methodUsed = "${vlmTarget.method}_r$retries",
+                    duration = elapsed,
+                    errorReason = if (!success) "重试${retries}次后仍失败" else "",
+                )
+            }
+
+            // ═══ STEP 3: 全失败 ═══
+            val elapsed = System.currentTimeMillis() - startTime
+            HandOutput(false, "tap", 0, 0, 0, 0, 0f, "all_failed", elapsed,
+                if (fuzzyResult != null) "关键词命中但无坐标 (置信度${fuzzyResult.confidence})"
+                else "视觉模型未配置或未识别到目标")
         } catch (e: Exception) {
             val elapsed = System.currentTimeMillis() - startTime
-            HandOutput(false, "tap", 0, 0, 0, 0, 0f, "exception", elapsed, e.message ?: "未知错误")
+            HandOutput(false, "tap", 0, 0, 0, 0, 0f, "exception", elapsed,
+                e.message ?: "未知错误")
         }
     }
-
-    // ── 工具方法 ──
 
     /** 切换模式 */
     fun setMode(newMode: HandMode) {
@@ -185,7 +182,6 @@ class AgentHand(
         config.maxRetries = newConfig.maxRetries
     }
 
-    /** 获取统计信息 */
     fun getStats(): Map<String, Any> = mapOf(
         "success_rate" to memory.getSuccessRate(),
         "method_stats" to memory.getMethodStats(),

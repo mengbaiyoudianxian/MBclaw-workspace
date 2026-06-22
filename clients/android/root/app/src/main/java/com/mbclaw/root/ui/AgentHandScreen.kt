@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.mbclaw.root.agent.TouchInjector
 import com.mbclaw.root.hand.AgentHand
 import com.mbclaw.root.hand.HandMode
 import com.mbclaw.root.data.UserSettings
@@ -21,18 +22,28 @@ import kotlinx.coroutines.launch
 
 /**
  * 智能体之手 — 控制面板
+ *
+ * v4.6 修复: executor 不再返回假 true, 而是真正调用 TouchInjector
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AgentHandScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val settings = remember { UserSettings(context) }
+
+    // ★ Bug1 核心修复: 真实触摸执行器
     val hand = remember {
-        AgentHand(context, settings) { point -> true }
+        AgentHand(context, settings) { point ->
+            // 真正执行触摸 — Root input tap > sendevent > Accessibility
+            TouchInjector.tap(context, point.x, point.y)
+        }
     }
+
     var selectedMode by remember { mutableStateOf(HandMode.BALANCE) }
     var isCalibrated by remember { mutableStateOf(hand.calibration.isCalibrated()) }
     var stats by remember { mutableStateOf(hand.getStats()) }
+    var selfTestResult by remember { mutableStateOf("") }
+    var testing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     Scaffold(
@@ -65,6 +76,42 @@ fun AgentHandScreen(onBack: () -> Unit) {
                     val rate = (stats["success_rate"] as? Float) ?: 0f
                     Text("成功率: ${"%.1f".format(rate * 100)}%")
                     LinearProgressIndicator(progress = { rate }, modifier = Modifier.fillMaxWidth())
+                }
+            }
+
+            // ── 双通道自检面板 (v4.7) ──
+            Card {
+                Column(Modifier.padding(16.dp)) {
+                    Text("🔧 双通道自检", fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    if (selfTestResult.isNotEmpty()) {
+                        Text(selfTestResult, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                testing = true
+                                scope.launch {
+                                    selfTestResult = "通道1 (触摸注入):\n" + TouchInjector.selfTest(context)
+                                    testing = false
+                                }
+                            },
+                            enabled = !testing,
+                            modifier = Modifier.weight(1f),
+                        ) { Text(if (testing) "..." else "🔍 通道1:触摸") }
+                        Button(
+                            onClick = {
+                                testing = true
+                                scope.launch {
+                                    val vlm = com.mbclaw.root.agent.VisionLocator.probe(context, settings)
+                                    selfTestResult = "通道2 (视觉模型):\n$vlm"
+                                    testing = false
+                                }
+                            },
+                            enabled = !testing,
+                            modifier = Modifier.weight(1f),
+                        ) { Text(if (testing) "..." else "👁 通道2:VLM") }
+                    }
                 }
             }
 
@@ -134,7 +181,7 @@ fun AgentHandScreen(onBack: () -> Unit) {
             // ── 测试 ──
             var testTarget by remember { mutableStateOf("发送") }
             var testResult by remember { mutableStateOf("") }
-            var testing by remember { mutableStateOf(false) }
+            var keyTest by remember { mutableStateOf(false) }
             Card {
                 Column(Modifier.padding(16.dp)) {
                     Text("🧪 试一下", fontWeight = FontWeight.Bold)
@@ -151,7 +198,7 @@ fun AgentHandScreen(onBack: () -> Unit) {
                     Spacer(Modifier.height(8.dp))
                     Button(
                         onClick = {
-                            testing = true
+                            keyTest = true
                             scope.launch {
                                 try {
                                     val fuzzy = com.mbclaw.root.hand.FuzzyClicker()
@@ -163,12 +210,12 @@ fun AgentHandScreen(onBack: () -> Unit) {
                                 } catch (e: Exception) {
                                     testResult = "失败: ${e.message}"
                                 }
-                                testing = false
+                                keyTest = false
                             }
                         },
-                        enabled = !testing,
+                        enabled = !keyTest,
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text(if (testing) "检测中..." else "🎯 检测关键词命中") }
+                    ) { Text(if (keyTest) "检测中..." else "🎯 检测关键词命中") }
                     if (testResult.isNotEmpty()) {
                         Spacer(Modifier.height(8.dp))
                         Text(testResult, style = MaterialTheme.typography.bodySmall,
@@ -201,7 +248,6 @@ fun AgentHandScreen(onBack: () -> Unit) {
                         Button(
                             onClick = {
                                 scope.launch {
-                                    // 简化版：用屏幕中心点+物理像素直接生成校准
                                     val dm = context.resources.displayMetrics
                                     hand.calibration.quickCalibrate(dm.widthPixels, dm.heightPixels)
                                     isCalibrated = true

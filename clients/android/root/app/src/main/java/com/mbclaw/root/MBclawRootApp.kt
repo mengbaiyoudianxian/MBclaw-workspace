@@ -76,6 +76,14 @@ class MBclawRootApp : Application() {
             this,
             com.mbclaw.root.data.Endpoints.backend(this)
         )
+
+        // ★ v4.6: 预热 TouchInjector (探测触摸设备, 避免首次调用卡顿)
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            kotlinx.coroutines.delay(2000) // 等 root 授权完成
+            com.mbclaw.root.agent.TouchInjector.init(
+                com.mbclaw.root.agent.PermissionTier.get(this@MBclawRootApp)
+            )
+        }
     }
 
     private fun createNotificationChannels() {

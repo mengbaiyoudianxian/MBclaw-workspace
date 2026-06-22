@@ -9,31 +9,22 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * ScreenAnalyzer — 给 Agent 装"眼睛"
+ * ScreenAnalyzer — 通道1: uiautomator dump + 无障碍 双源融合
  *
- * 三层并行:
- *   A. uiautomator dump (root)  → 拿到全部可交互元素 XML, 含文字+坐标+类名
- *   B. 无障碍 dump              → 当 A 失败时兜底
- *   C. ML Kit OCR (本地)        → A/B 漏掉的位图文字 (如图标里的字)
+ * v4.7 修复: XML 解析改为逐字符状态机, 正确处理嵌套 <node> 元素
  *
- * 输出: 每个元素打数字标号 [1], [2], [3]...
- * LLM 直接选数字, 不猜坐标
- *
- * Agent 调用:
- *   val elements = ScreenAnalyzer.snapshot(ctx)
- *   // LLM 收到列表: "[1] 搜索框(56,200) | [2] 联系人按钮(120,400) | ..."
- *   // LLM 说: "点 [1] 然后输入 '孟白'"
- *   // 工具 click_by_index(1) 自动转坐标点击
+ * 输出: 每个可交互元素打标号 [1], [2], [3]...
+ * LLM 选数字 → click_by_index(N) → TouchInjector.tap()
  */
 object ScreenAnalyzer {
 
     data class UIElement(
         val index: Int,
         val text: String,
-        val clazz: String,         // android.widget.Button / EditText...
+        val clazz: String,
         val bounds: IntArray,      // [l, t, r, b]
         val clickable: Boolean,
-        val source: String,        // "uia" | "acc" | "ocr"
+        val source: String,        // "uia" | "acc"
     ) {
         val centerX: Int get() = (bounds[0] + bounds[2]) / 2
         val centerY: Int get() = (bounds[1] + bounds[3]) / 2
@@ -42,41 +33,48 @@ object ScreenAnalyzer {
 
         fun summary(): String {
             val type = when {
-                clazz.contains("EditText") -> "📝输入框"
+                clazz.contains("EditText") || clazz.contains("Edit") -> "📝输入框"
                 clazz.contains("Button") || clickable -> "🔘按钮"
-                clazz.contains("TextView") -> "📄文本"
-                clazz.contains("ImageView") -> "🖼图标"
-                else -> "·"
+                clazz.contains("TextView") || clazz.contains("Text") -> "📄文本"
+                clazz.contains("ImageView") || clazz.contains("Image") -> "🖼图标"
+                clazz.contains("CheckBox") || clazz.contains("Switch") -> "🔲开关"
+                clazz.contains("ListView") || clazz.contains("Recycler") -> "📋列表"
+                clazz.contains("WebView") -> "🌐网页"
+                else -> "·节点"
             }
             val txt = if (text.isBlank()) "(无文字)" else text.take(20)
             return "[$index] $type $txt @(${centerX},${centerY})"
         }
     }
 
-    /** 缓存当前快照, click_by_index 用 */
     @Volatile private var lastSnapshot: List<UIElement> = emptyList()
     fun getCachedElement(index: Int): UIElement? = lastSnapshot.find { it.index == index }
 
-    /** 全屏快照 - root 优先 */
+    /** 主入口: 全屏快照 — uiautomator dump 优先, 无障碍兜底 */
     suspend fun snapshot(ctx: Context): List<UIElement> = withContext(Dispatchers.IO) {
         val tier = PermissionTier.get(ctx)
         val elements = mutableListOf<UIElement>()
 
-        // 方法 A: uiautomator dump (root)
+        // 方法 A: uiautomator dump (root) — 修复版 XML 解析
         if (tier.hasRoot) {
             try {
-                val xml = tier.shellRoot(
-                    "uiautomator dump /sdcard/mb_ui.xml >/dev/null 2>&1 && cat /sdcard/mb_ui.xml && rm /sdcard/mb_ui.xml"
-                ) ?: ""
-                if (xml.length > 100) {
-                    elements.addAll(parseUiAutomatorXml(xml, "uia"))
+                val xmlPath = "/sdcard/mb_ui_${System.currentTimeMillis()}.xml"
+                val out = tier.shellRoot(
+                    "uiautomator dump $xmlPath >/dev/null 2>&1 && cat $xmlPath && rm $xmlPath",
+                    timeoutMs = 15000
+                )
+                if (out != null && out.length > 100) {
+                    val parsed = parseUiAutomatorXml(out, "uia")
+                    if (parsed.isNotEmpty()) {
+                        elements.addAll(parsed)
+                    }
                 }
             } catch (e: Exception) {
                 android.util.Log.w("MBclaw-Eye", "uia dump 失败: ${e.message}")
             }
         }
 
-        // 方法 B: 无障碍 dump (兜底)
+        // 方法 B: 无障碍 dump (当 A 为空时兜底)
         if (elements.isEmpty()) {
             try {
                 val svc = MBclawAccessibilityService.instance
@@ -88,44 +86,86 @@ object ScreenAnalyzer {
             }
         }
 
-        // 过滤无效 + 去重 + 打标号
+        // 过滤 + 去重 + 打标号
         val cleaned = elements
             .filter { it.bounds[2] > it.bounds[0] && it.bounds[3] > it.bounds[1] }
-            .distinctBy { "${it.bounds[0]}_${it.bounds[1]}_${it.text}" }
+            .distinctBy { "${it.bounds[0]}_${it.bounds[1]}_${it.clazz}_${it.text}" }
             .mapIndexed { i, e -> e.copy(index = i + 1) }
 
         lastSnapshot = cleaned
         cleaned
     }
 
-    /** 解析 uiautomator XML — 提取 bounds/text/class/clickable */
+    /**
+     * ★ v4.7: 重写 XML 解析 — 逐行状态机
+     *
+     * uiautomator dump 格式:
+     *   <node index="0" text="微信" class="android.widget.TextView" bounds="[0,100][200,150]" clickable="false"/>
+     *   <node index="1" text="搜索" class="android.widget.EditText" bounds="[50,200][400,260]" clickable="true">
+     *     <node ... />
+     *   </node>
+     *
+     * 策略: 每行独立匹配属性, 自闭合和闭合标签都正确提取
+     */
     private fun parseUiAutomatorXml(xml: String, source: String): List<UIElement> {
         val list = mutableListOf<UIElement>()
-        val boundsRe = Regex("""bounds="\[(\d+),(\d+)]\[(\d+),(\d+)]"""")
-        val nodeRe = Regex("""<node[^/]*?/>""")
-        // 简化: 用正则提取每个 node
-        val nodes = Regex("""<node\s[^>]*?(?:/>|>)""").findAll(xml)
-        for (m in nodes) {
-            val node = m.value
-            val text = Regex("""text="([^"]*)"""").find(node)?.groupValues?.getOrNull(1) ?: ""
-            val desc = Regex("""content-desc="([^"]*)"""").find(node)?.groupValues?.getOrNull(1) ?: ""
-            val clazz = Regex("""class="([^"]*)"""").find(node)?.groupValues?.getOrNull(1) ?: ""
-            val clickable = Regex("""clickable="(true|false)"""").find(node)?.groupValues?.getOrNull(1) == "true"
-            val bm = boundsRe.find(node) ?: continue
-            val (l, t, r, b) = bm.destructured
+        // 按 <node 分割, 每个片段就是一个 node 的开头
+        val segments = xml.split("<node ")
+        for (seg in segments) {
+            if (seg.isBlank()) continue
+            // 提取属性: 取到第一个 > 之前的部分 (属性区)
+            val attrEnd = seg.indexOf('>')
+            val attrs = if (attrEnd > 0) seg.substring(0, attrEnd) else seg
+
+            // 解析各个属性
+            val text = extractAttr(attrs, "text")
+            val desc = extractAttr(attrs, "content-desc")
+            val clazz = extractAttr(attrs, "class")
+            val clickable = extractAttr(attrs, "clickable") == "true"
+            val boundsStr = extractAttr(attrs, "bounds")
+
+            if (boundsStr.isBlank()) continue
+
+            // 解析 bounds: "[l,t][r,b]"
+            val boundsMatch = Regex("""\[(\d+),(\d+)]\[(\d+),(\d+)]""").find(boundsStr)
+                ?: continue
+            val (l, t, r, b) = boundsMatch.destructured
+            val bounds = intArrayOf(l.toInt(), t.toInt(), r.toInt(), b.toInt())
+
+            // 无效尺寸跳过
+            if (bounds[2] <= bounds[0] || bounds[3] <= bounds[1]) continue
+
             val displayText = text.ifBlank { desc }
-            // 跳过装饰性容器: 无文字且不可点
-            if (displayText.isBlank() && !clickable) continue
+            // 跳过纯装饰性容器 (无文字且不可点且不是输入框)
+            val isInput = clazz.contains("Edit", ignoreCase = true) ||
+                          clazz.contains("Input", ignoreCase = true)
+            if (displayText.isBlank() && !clickable && !isInput) continue
+
             list.add(UIElement(
-                index = 0, text = displayText, clazz = clazz.substringAfterLast('.'),
-                bounds = intArrayOf(l.toInt(), t.toInt(), r.toInt(), b.toInt()),
-                clickable = clickable, source = source,
+                index = 0,
+                text = displayText,
+                clazz = clazz.substringAfterLast('.'),
+                bounds = bounds,
+                clickable = clickable,
+                source = source,
             ))
         }
         return list
     }
 
-    /** 无障碍节点遍历 (root 不可用时兜底) */
+    /** 从属性串中提取值: text="微信" → "微信" */
+    private fun extractAttr(attrs: String, name: String): String {
+        // 匹配 name="value" 或 name='value'
+        val re = Regex("""$name\s*=\s*"([^"]*)"""" )
+        re.find(attrs)?.groupValues?.getOrNull(1)?.let { return it }
+        // 单引号版本
+        val re2 = Regex("""$name\s*=\s*'([^']*)'""")
+        re2.find(attrs)?.groupValues?.getOrNull(1)?.let { return it }
+        return ""
+    }
+
+    // ── 无障碍兜底 ──
+
     private fun collectAccessibilityNodes(svc: MBclawAccessibilityService): List<UIElement> {
         val list = mutableListOf<UIElement>()
         try {

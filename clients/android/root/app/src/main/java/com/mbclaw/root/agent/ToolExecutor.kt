@@ -210,25 +210,30 @@ class ToolExecutor(
                 }
                 "click_at" -> {
                     val x = args.optInt("x"); val y = args.optInt("y")
-                    val r = CapabilityRouter.exec(context,
-                        onRoot = { t ->
-                            // 检查实际成功: execRoot 必须返回非 null 才算成功
-                            t.shellRoot("input tap $x $y && echo OK")?.let { if (it.contains("OK") || it.isBlank()) "👆 点击 ($x,$y) [ROOT]" else null }
-                        },
-                        onAdb = { t -> t.shellAdb("input tap $x $y")?.let { "👆 点击 ($x,$y) [ADB]" } },
-                        onUI = {
-                            val svc = MBclawAccessibilityService.instance
-                            if (svc?.clickAt(x.toFloat(), y.toFloat()) == true) "👆 点击 ($x,$y) [UI]" else null
-                        },
-                        failHint = "❌ click_at 三层都失败"
-                    )
-                    r.output
+                    // ★ v4.6: 优先使用 TouchInjector (多通道: input tap → sendevent → 无障碍)
+                    val ok = TouchInjector.tap(context, x, y)
+                    if (ok) "👆 点击 ($x,$y) [ROOT/TouchInjector]"
+                    else {
+                        // 兜底: CapabilityRouter
+                        val r = CapabilityRouter.exec(context,
+                            onRoot = { t -> t.shellRoot("input tap $x $y && echo OK")?.let { "👆 点击 ($x,$y) [ROOT]" } },
+                            onAdb = { t -> t.shellAdb("input tap $x $y")?.let { "👆 点击 ($x,$y) [ADB]" } },
+                            onUI = {
+                                val svc = MBclawAccessibilityService.instance
+                                if (svc?.clickAt(x.toFloat(), y.toFloat()) == true) "👆 点击 ($x,$y) [UI]" else null
+                            },
+                            failHint = "❌ click_at 全部失败"
+                        )
+                        r.output
+                    }
                 }
                 "long_press_at" -> {
                     val x = args.optInt("x"); val y = args.optInt("y")
                     val dur = args.optLong("duration_ms", 800)
-                    CapabilityRouter.exec(context,
-                        onRoot = { t -> t.shellRoot("input swipe $x $y $x $y $dur && echo OK")?.let { "👇 长按 ($x,$y) ${dur}ms [ROOT]" } },
+                    val ok = TouchInjector.longPress(context, x, y, dur)
+                    if (ok) "👇 长按 ($x,$y) ${dur}ms [ROOT/TouchInjector]"
+                    else CapabilityRouter.exec(context,
+                        onRoot = { t -> t.shellRoot("input swipe $x $y $x $y $dur && echo OK")?.let { "👇 长按 [ROOT]" } },
                         onAdb = { t -> t.shellAdb("input swipe $x $y $x $y $dur")?.let { "👇 长按 [ADB]" } },
                         onUI = {
                             val svc = MBclawAccessibilityService.instance
@@ -241,8 +246,10 @@ class ToolExecutor(
                     val x1 = args.optInt("x1"); val y1 = args.optInt("y1")
                     val x2 = args.optInt("x2"); val y2 = args.optInt("y2")
                     val dur = args.optLong("duration_ms", 300)
-                    CapabilityRouter.exec(context,
-                        onRoot = { t -> t.shellRoot("input swipe $x1 $y1 $x2 $y2 $dur && echo OK")?.let { "🌊 滑动 ($x1,$y1)→($x2,$y2) [ROOT]" } },
+                    val ok = TouchInjector.swipe(context, x1, y1, x2, y2, dur)
+                    if (ok) "🌊 滑动 ($x1,$y1)→($x2,$y2) [ROOT/TouchInjector]"
+                    else CapabilityRouter.exec(context,
+                        onRoot = { t -> t.shellRoot("input swipe $x1 $y1 $x2 $y2 $dur && echo OK")?.let { "🌊 滑动 [ROOT]" } },
                         onAdb = { t -> t.shellAdb("input swipe $x1 $y1 $x2 $y2 $dur")?.let { "🌊 滑动 [ADB]" } },
                         onUI = {
                             val svc = MBclawAccessibilityService.instance
@@ -252,13 +259,15 @@ class ToolExecutor(
                     ).output
                 }
                 "input_text" -> {
-                    val text = args.optString("text").replace("'", "'\\''")
-                    CapabilityRouter.exec(context,
-                        onRoot = { t -> t.shellRoot("input text '$text' && echo OK")?.let { "⌨️ 输入 [ROOT]" } },
-                        onAdb = { t -> t.shellAdb("input text '$text'")?.let { "⌨️ 输入 [ADB]" } },
+                    val text = args.optString("text")
+                    val ok = TouchInjector.inputText(context, text)
+                    if (ok) "⌨️ 输入 [ROOT/TouchInjector]"
+                    else CapabilityRouter.exec(context,
+                        onRoot = { t -> t.shellRoot("input text '${text.replace("'", "'\\''")}' && echo OK")?.let { "⌨️ 输入 [ROOT]" } },
+                        onAdb = { t -> t.shellAdb("input text '${text.replace("'", "'\\''")}'")?.let { "⌨️ 输入 [ADB]" } },
                         onUI = {
                             val svc = MBclawAccessibilityService.instance
-                            if (svc?.inputText(args.optString("text")) == true) "⌨️ 输入 [UI]" else null
+                            if (svc?.inputText(text) == true) "⌨️ 输入 [UI]" else null
                         },
                         failHint = "❌ input_text 失败"
                     ).output
@@ -273,21 +282,25 @@ class ToolExecutor(
                         else -> 0
                     }
                     if (keyCode <= 0) "❌ 未知按键 $keyName"
-                    else when {
-                        tier.hasRoot -> { execRoot("input keyevent $keyCode"); "⌨️ 按下 $keyName [Root]" }
-                        tier.hasAdb -> { shizuku.exec("input keyevent $keyCode"); "⌨️ 按下 $keyName [Shizuku]" }
-                        tier.hasAccessibility -> {
-                            val svc = MBclawAccessibilityService.instance
-                            val globalAction = when (keyCode) {
-                                4 -> android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK
-                                3 -> android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME
-                                187 -> android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_RECENTS
-                                else -> -1
+                    else {
+                        val ok = TouchInjector.keyEvent(context, keyCode)
+                        if (ok) "⌨️ 按下 $keyName [TouchInjector]"
+                        else when {
+                            tier.hasRoot -> { execRoot("input keyevent $keyCode"); "⌨️ 按下 $keyName [Root]" }
+                            tier.hasAdb -> { shizuku.exec("input keyevent $keyCode"); "⌨️ 按下 $keyName [Shizuku]" }
+                            tier.hasAccessibility -> {
+                                val svc = MBclawAccessibilityService.instance
+                                val globalAction = when (keyCode) {
+                                    4 -> android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK
+                                    3 -> android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME
+                                    187 -> android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_RECENTS
+                                    else -> -1
+                                }
+                                if (globalAction >= 0 && svc?.performGlobalAction(globalAction) == true) "⌨️ 按下 $keyName [无障碍]"
+                                else "❌ 无障碍只支持 BACK/HOME/RECENTS"
                             }
-                            if (globalAction >= 0 && svc?.performGlobalAction(globalAction) == true) "⌨️ 按下 $keyName [无障碍]"
-                            else "❌ 无障碍只支持 BACK/HOME/RECENTS"
+                            else -> "❌ 需要 Root/Shizuku/无障碍"
                         }
-                        else -> "❌ 需要 Root/Shizuku/无障碍"
                     }
                 }
 
@@ -775,41 +788,51 @@ class ToolExecutor(
                     if (el == null) "❌ 找不到索引 $idx, 请先调 see_screen 获取最新列表"
                     else {
                         val x = el.centerX; val y = el.centerY
-                        val r = CapabilityRouter.exec(context,
-                            onRoot = { t -> t.shellRoot("input tap $x $y && echo OK")?.let { "👆 [$idx] ${el.text.take(20)} @($x,$y) [ROOT]" } },
+                        // ★ v4.6: TouchInjector 优先
+                        val ok = TouchInjector.tap(context, x, y)
+                        if (ok) "👆 [$idx] ${el.text.take(20)} @($x,$y) [TouchInjector]"
+                        else CapabilityRouter.exec(context,
+                            onRoot = { t -> t.shellRoot("input tap $x $y && echo OK")?.let { "👆 [$idx] [ROOT]" } },
                             onAdb = { t -> t.shellAdb("input tap $x $y")?.let { "👆 [$idx] [ADB]" } },
                             onUI = {
                                 val svc = MBclawAccessibilityService.instance
                                 if (svc?.clickAt(x.toFloat(), y.toFloat()) == true) "👆 [$idx] [UI]" else null
                             },
-                        )
-                        r.output
+                        ).output
                     }
                 }
                 "input_by_index" -> {
                     val idx = args.optInt("index", -1)
-                    val text = args.optString("text").replace("'", "'\\''")
+                    val text = args.optString("text")
                     val el = ScreenAnalyzer.getCachedElement(idx)
                     if (el == null) "❌ 找不到索引 $idx"
                     else {
-                        // 先点击让它获焦点, 再输入
-                        val r = CapabilityRouter.exec(context,
-                            onRoot = { t ->
-                                t.shellRoot("input tap ${el.centerX} ${el.centerY}; sleep 0.2; input text '$text' && echo OK")?.let {
-                                    "⌨️ 输入到 [$idx]: ${args.optString("text")} [ROOT]"
-                                }
-                            },
-                            onAdb = { t ->
-                                t.shellAdb("input tap ${el.centerX} ${el.centerY}")
-                                t.shellAdb("input text '$text'")?.let { "⌨️ [$idx] [ADB]" }
-                            },
-                            onUI = {
-                                val svc = MBclawAccessibilityService.instance
-                                svc?.clickAt(el.centerX.toFloat(), el.centerY.toFloat())
-                                if (svc?.inputText(args.optString("text")) == true) "⌨️ [$idx] [UI]" else null
-                            },
-                        )
-                        r.output
+                        // ★ v4.6: TouchInjector 优先
+                        val tapOk = TouchInjector.tap(context, el.centerX, el.centerY)
+                        if (tapOk) {
+                            Thread.sleep(200) // 等焦点切换
+                            val inputOk = TouchInjector.inputText(context, text)
+                            if (inputOk) "⌨️ 输入到 [$idx]: $text [TouchInjector]"
+                            else "⚠️ 点击成功但输入失败 [$idx]"
+                        } else {
+                            val r = CapabilityRouter.exec(context,
+                                onRoot = { t ->
+                                    t.shellRoot("input tap ${el.centerX} ${el.centerY}; sleep 0.2; input text '${text.replace("'", "'\\''")}' && echo OK")?.let {
+                                        "⌨️ 输入到 [$idx]: $text [ROOT]"
+                                    }
+                                },
+                                onAdb = { t ->
+                                    t.shellAdb("input tap ${el.centerX} ${el.centerY}")
+                                    t.shellAdb("input text '${text.replace("'", "'\\''")}'")?.let { "⌨️ [$idx] [ADB]" }
+                                },
+                                onUI = {
+                                    val svc = MBclawAccessibilityService.instance
+                                    svc?.clickAt(el.centerX.toFloat(), el.centerY.toFloat())
+                                    if (svc?.inputText(text) == true) "⌨️ [$idx] [UI]" else null
+                                },
+                            )
+                            r.output
+                        }
                     }
                 }
                 "find_by_text" -> {
@@ -827,6 +850,60 @@ class ToolExecutor(
                     kotlinx.coroutines.delay(ms.toLong())
                     val elements = ScreenAnalyzer.snapshot(context)
                     "⏳ 等待 ${ms}ms 后: ${ScreenAnalyzer.formatForLLM(elements, 30)}"
+                }
+                // ★ v4.7: VLM 视觉定位通道
+                "vision_locate" -> {
+                    val desc = args.optString("description", "")
+                    if (desc.isBlank()) "❌ 请提供 description (如 '点击发送按钮')"
+                    else {
+                        val loc = VisionLocator.locate(context, settings, desc)
+                        if (loc.success) {
+                            when (loc.action) {
+                                "Tap" -> {
+                                    val ok = TouchInjector.tap(context, loc.x, loc.y)
+                                    "👁 VLM定位: (${loc.x},${loc.y}) 置信度${"%.1f".format(loc.confidence*100)}%\n" +
+                                    "思考: ${loc.thinking.take(100)}\n" +
+                                    "执行: ${if (ok) "✅ 已点击" else "❌ 点击失败"}"
+                                }
+                                "Type" -> {
+                                    val ok = TouchInjector.inputText(context, loc.text)
+                                    "👁 VLM定位: 输入 \"${loc.text.take(30)}\"\n执行: ${if (ok) "✅" else "❌"}"
+                                }
+                                "Launch" -> {
+                                    systemAmStart(Intent(Intent.ACTION_VIEW).apply {
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        // 尝试根据 app 名找包名
+                                        val pkg = when (loc.text.lowercase()) {
+                                            "微信", "wechat" -> "com.tencent.mm"
+                                            "qq" -> "com.tencent.mobileqq"
+                                            "设置", "settings" -> "com.android.settings"
+                                            else -> loc.text
+                                        }
+                                        if (pkg.contains(".")) {
+                                            val intent = context.packageManager.getLaunchIntentForPackage(pkg)
+                                            if (intent != null) context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                        }
+                                    })
+                                    "👁 VLM定位: 启动 ${loc.text}"
+                                }
+                                "Back" -> {
+                                    TouchInjector.keyEvent(context, 4)
+                                    "👁 VLM定位: 返回"
+                                }
+                                "Home" -> {
+                                    TouchInjector.keyEvent(context, 3)
+                                    "👁 VLM定位: 主页"
+                                }
+                                "Swipe" -> {
+                                    val ok = TouchInjector.swipe(context, loc.x, loc.y, screenW/2, screenH/2, 500)
+                                    "👁 VLM定位: 滑动\n执行: ${if (ok) "✅" else "❌"}"
+                                }
+                                else -> "👁 VLM定位: ${loc.action} (未处理)"
+                            }
+                        } else {
+                            "❌ VLM定位失败: ${loc.errorReason}"
+                        }
+                    }
                 }
 
                 else -> "未知工具: $toolName"

@@ -4,10 +4,13 @@ import android.graphics.Point
 import kotlin.math.abs
 
 /**
- * 三维融合决策 — 三通道结果 → 最优坐标
+ * FusionDecider — 多通道决策融合 (v4.7 简化)
  *
- * 优先级: 模糊点击 > 精定位 > 粗筛
- * 冲突检测: 坐标差距>屏幕10% → 二选一验证
+ * 现在只有两个通道:
+ *   通道1: FuzzyClicker (关键词/历史)
+ *   通道2: VisionLocator (VLM 看图)
+ *
+ * 没有 grid-based coarse/fine (已废弃)
  */
 class FusionDecider(
     private val config: HandConfig,
@@ -18,7 +21,6 @@ class FusionDecider(
     data class ChannelResult(
         val normalizedX: Int, val normalizedY: Int,
         val confidence: Float, val method: String,
-        // method: "fuzzy" | "fine" | "coarse" | "fallback_fullscreen"
     )
 
     data class FinalDecision(
@@ -28,92 +30,73 @@ class FusionDecider(
         val reason: String = "",
     )
 
-    /** 融合三通道结果 → 最终决策 */
+    /**
+     * 融合 VLM + Fuzzy + Memory 通道
+     */
     fun decide(
+        vlmResult: BlockRecognizer.RecognizedTarget?,
         fuzzy: FuzzyClicker.FuzzyResult?,
-        fineResults: List<BlockRecognizer.FineResult>,
-        coarseResults: List<BlockRecognizer.CoarseResult>,
+        history: OperationMemory.OpRecord?,
     ): FinalDecision {
         val channels = mutableListOf<ChannelResult>()
 
-        // 通道1: 模糊点击 (最高权重)
-        if (config.fuzzyEnabled && fuzzy != null && fuzzy.confidence >= config.fuzzyThreshold) {
+        // VLM 通道 (最高权重)
+        if (vlmResult != null && vlmResult.confidence >= config.minConfidence) {
             channels.add(ChannelResult(
-                fuzzy.bounds.centerX(), fuzzy.bounds.centerY(),
-                fuzzy.confidence, "fuzzy"
+                vlmResult.normalizedX, vlmResult.normalizedY,
+                vlmResult.confidence, "vlm"
             ))
         }
 
-        // 通道2: 精定位结果
-        fineResults.forEach {
-            channels.add(ChannelResult(it.normalizedX, it.normalizedY, it.confidence, "fine"))
+        // 历史记忆通道
+        if (history != null && history.confidence >= 0.8f) {
+            channels.add(ChannelResult(
+                history.x, history.y, history.confidence, "memory"
+            ))
         }
 
-        // 通道3: 粗筛结果 (降级)
-        coarseResults.forEach {
-            val cols = config.coarseGridCols; val rows = config.coarseGridRows
-            val cx = (it.gridCol * 1000 / cols) + (500 / cols)
-            val cy = (it.gridRow * 1000 / rows) + (500 / rows)
-            channels.add(ChannelResult(cx, cy, it.confidence * 0.6f, "coarse"))
+        // 模糊通道 (低权重)
+        if (config.fuzzyEnabled && fuzzy != null && fuzzy.confidence >= config.fuzzyThreshold) {
+            channels.add(ChannelResult(
+                fuzzy.bounds.centerX(), fuzzy.bounds.centerY(),
+                fuzzy.confidence * 0.7f, "fuzzy"
+            ))
         }
 
         if (channels.isEmpty()) {
             return FinalDecision(0, 0, 0f, "none", false, "无可用通道")
         }
 
-        // 优先级排序: fuzzy > fine > coarse
-        val priority = mapOf("fuzzy" to 3, "fine" to 2, "coarse" to 1, "fallback_fullscreen" to 2)
-        val sorted = channels.sortedByDescending { priority[it.method] ?: 0 }
-
-        // 模糊点击直接命中高置信度 → 直接执行
-        val top = sorted.first()
-        if (top.method == "fuzzy" && top.confidence >= config.fuzzyThreshold) {
-            return FinalDecision(top.normalizedX, top.normalizedY, top.confidence, top.method, true, "模糊点击直接命中")
+        // VLM 直接命中 → 直接执行
+        val vlm = channels.find { it.method == "vlm" }
+        if (vlm != null && vlm.confidence >= 0.6f) {
+            return FinalDecision(vlm.normalizedX, vlm.normalizedY, vlm.confidence, "vlm", true, "VLM 视觉定位")
         }
 
-        // 多通道加权平均
-        if (sorted.size >= 2) {
-            // 检查冲突: 两通道坐标差距 > 屏幕宽度的10%
-            val conflict = detectConflict(sorted)
-            if (conflict) {
-                return FinalDecision(
-                    top.normalizedX, top.normalizedY, top.confidence, top.method,
-                    false, "多通道冲突，需要二选一验证"
-                )
-            }
+        // Memory 高置信度 → 直接执行
+        val mem = channels.find { it.method == "memory" }
+        if (mem != null && mem.confidence >= 0.8f) {
+            return FinalDecision(mem.normalizedX, mem.normalizedY, mem.confidence, "memory", true, "历史记忆命中")
+        }
 
-            // 加权融合
-            val weighted = weightedAverage(sorted)
-            if (weighted.confidence >= config.minConfidence) {
-                return FinalDecision(weighted.normalizedX, weighted.normalizedY, weighted.confidence, "fusion", true, "加权融合")
+        // 检测 VLM vs Memory 冲突
+        if (vlm != null && mem != null) {
+            val dx = abs(vlm.normalizedX - mem.normalizedX)
+            val dy = abs(vlm.normalizedY - mem.normalizedY)
+            val threshold = (screenWidth * 0.1).toInt()
+            if (dx > threshold || dy > threshold) {
+                // 冲突: 信任 VLM
+                return FinalDecision(vlm.normalizedX, vlm.normalizedY, vlm.confidence, "vlm", true, "VLM优先 (与记忆冲突)")
             }
         }
 
-        // 单通道判断
-        if (top.confidence >= config.minConfidence) {
-            return FinalDecision(top.normalizedX, top.normalizedY, top.confidence, top.method, true, "单通道达标")
+        // 取最高置信度
+        val best = channels.maxByOrNull { it.confidence }!!
+        if (best.confidence >= config.minConfidence) {
+            return FinalDecision(best.normalizedX, best.normalizedY, best.confidence, best.method, true, "最高置信度")
         }
 
-        return FinalDecision(top.normalizedX, top.normalizedY, top.confidence, top.method, false, "置信度不足 (${top.confidence} < ${config.minConfidence})")
-    }
-
-    private fun detectConflict(channels: List<ChannelResult>): Boolean {
-        if (channels.size < 2) return false
-        val threshold = (screenWidth * 0.1).toInt() // 屏幕宽度10%
-        val c1 = channels[0]; val c2 = channels[1]
-        val dx = abs(c1.normalizedX - c2.normalizedX)
-        val dy = abs(c1.normalizedY - c2.normalizedY)
-        return dx > threshold || dy > threshold
-    }
-
-    private fun weightedAverage(channels: List<ChannelResult>): ChannelResult {
-        val weights = mapOf("fuzzy" to 0.5f, "fine" to 0.35f, "coarse" to 0.15f)
-        var totalWeight = 0f; var wx = 0f; var wy = 0f; var wc = 0f
-        for (ch in channels) {
-            val w = weights[ch.method] ?: 0.2f
-            wx += ch.normalizedX * w; wy += ch.normalizedY * w
-            wc += ch.confidence * w; totalWeight += w
-        }
-        return ChannelResult((wx / totalWeight).toInt(), (wy / totalWeight).toInt(), wc / totalWeight, "fusion")
+        return FinalDecision(best.normalizedX, best.normalizedY, best.confidence, best.method, false,
+            "置信度不足 ${"%.1f".format(best.confidence)} < ${config.minConfidence}")
     }
 }
