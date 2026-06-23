@@ -117,24 +117,36 @@ object RootBootstrap {
      */
     fun setupAsync(context: Context) {
         val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-        // 检查当前权限状态, 不够就重试 (不等 setup_done 标记)
         val (currentGranted, currentTotal) = status(context)
         if (prefs.getBoolean(K_DONE, false) && currentGranted >= MIN_GRANTED) {
             Log.i(TAG, "已完成初始化 ($currentGranted/$currentTotal), 跳过")
             return
         }
         if (currentGranted < MIN_GRANTED) {
-            Log.i(TAG, "权限不足 ($currentGranted/$currentTotal < $MIN_GRANTED), 重新初始化")
+            Log.i(TAG, "权限不足 ($currentGranted/$currentTotal < $MIN_GRANTED), 需要初始化")
         }
-        // 避免短时间内重复尝试
         val last = prefs.getLong(K_LAST_ATTEMPT, 0)
-        if (System.currentTimeMillis() - last < 30_000) return
+        if (System.currentTimeMillis() - last < 10_000) {
+            // 10秒内重试: 延迟后重试 (root可能还没就绪)
+            CoroutineScope(Dispatchers.IO).launch {
+                delay(10_000)
+                setupAsync(context)
+            }
+            return
+        }
         prefs.edit().putLong(K_LAST_ATTEMPT, System.currentTimeMillis()).apply()
 
         CoroutineScope(Dispatchers.IO).launch {
-            val tier = PermissionTier.get(context)
+            // 等 root 就绪: 最多尝试 5 次, 每次间隔 3 秒
+            var tier = PermissionTier.get(context)
+            var attempts = 0
+            while (!tier.hasRoot && attempts < 5) {
+                delay(3000)
+                tier = PermissionTier.get(context) // 重新获取(触发新的root探测)
+                attempts++
+            }
             if (!tier.hasRoot) {
-                Log.w(TAG, "无 root, 跳过")
+                Log.w(TAG, "5次尝试后仍无 root, 跳过")
                 return@launch
             }
             val pkg = context.packageName
