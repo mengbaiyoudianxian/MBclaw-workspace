@@ -323,9 +323,16 @@ fun SettingsPage(
                 val cfg = remember { com.mbclaw.root.agent.DebugRemote.load(ctx) }
                 SettingItemRow(
                     "🐛 远程调试",
-                    subtitle = if (cfg.enabled) "已开启 · 连接码: ${cfg.code.take(8)}..."
+                    subtitle = if (cfg.enabled) "已开启 · 连接码: ${cfg.code} · 点击复制"
                               else "让作者远程查看你的设备状态 (排查 bug 专用)",
-                    onClick = { showDebug = true },
+                    onClick = {
+                        if (cfg.enabled) {
+                            val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            cm.setPrimaryClip(android.content.ClipData.newPlainText("debug code", cfg.code))
+                            android.widget.Toast.makeText(ctx, "已复制: ${cfg.code}", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        showDebug = true
+                    },
                 )
             }
             if (showDebug) DebugRemoteSheet(ctx, onDismiss = { showDebug = false })
