@@ -269,55 +269,56 @@ object VisionLocator {
      *   finish(message="xxx")
      */
     private fun parseVisionResponse(content: String, screenW: Int, screenH: Int): LocateResult {
-        fun normX(nx: Int) = (nx / 999f * screenW).toInt()
-        fun normY(ny: Int) = (ny / 999f * screenH).toInt()
+        val sw = if (screenW > 0) screenW else 1080
+        val sh = if (screenH > 0) screenH else 2400
+        fun normX(nx: Int) = (nx / 999f * sw).toInt().coerceIn(0, sw)
+        fun normY(ny: Int) = (ny / 999f * sh).toInt().coerceIn(0, sh)
 
-        val thinking = Regex("""<think>(.*?)</think>""", RegexOption.DOT_MATCHES_ALL)
-            .find(content)?.groupValues?.getOrNull(1)?.trim() ?: ""
-        val actionText = Regex("""<answer>(.*?)</answer>""", RegexOption.DOT_MATCHES_ALL)
-            .find(content)?.groupValues?.getOrNull(1)?.trim() ?: content
+        val actionText = content
 
-        if (actionText.contains("finish(message=")) {
-            val msg = Regex("""finish\(message="([^"]*)"""").find(actionText)?.groupValues?.getOrNull(1) ?: "任务结束"
+        if (actionText.contains("finish(message=") || actionText.contains("finish\uff08message=")) {
+            val msg = Regex("""finish[\uff08(]message[=:]\\s*["']?([^"')]+)""").find(actionText)?.groupValues?.getOrNull(1) ?: "\u4efb\u52a1\u7ed3\u675f"
             return LocateResult(false, errorReason = msg)
         }
 
-        val action = Regex("""action="([^"]+)"""").find(actionText)?.groupValues?.getOrNull(1) ?: "Tap"
-        val elem = Regex("""element=\[(\d+)\s*[,，]\s*(\d+)]""").find(actionText)
+        val action = Regex("""action\\s*[=:]\\s*["']?(\\w+(?:\\s*\\w+)?)""").find(actionText)?.groupValues?.getOrNull(1) ?: "Tap"
+        val elem = Regex("""element\\s*[=:]\\s*\\[(\\d+)\\s*[,\uff0c]\\s*(\\d+)]""").find(actionText)
         val ex = elem?.groupValues?.get(1)?.toIntOrNull() ?: 500
         val ey = elem?.groupValues?.get(2)?.toIntOrNull() ?: 500
-        val txt = Regex("""text="([^"]+)"""").find(actionText)?.groupValues?.getOrNull(1) ?: ""
-        val swStart = Regex("""start=\[(\d+)\s*[,，]\s*(\d+)]""").find(actionText)
-        val swEnd = Regex("""end=\[(\d+)\s*[,，]\s*(\d+)]""").find(actionText)
-        val dur = Regex("""duration=(\d+)""").find(actionText)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-        val pkg = Regex("""package="([^"]+)"""").find(actionText)?.groupValues?.getOrNull(1) ?: ""
+        val txt = Regex("""text\\s*[=:]\\s*["']([^"']+)""").find(actionText)?.groupValues?.getOrNull(1) ?: ""
+        val swStart = Regex("""start\\s*[=:]\\s*\\[(\\d+)\\s*[,\uff0c]\\s*(\\d+)]""").find(actionText)
+        val swEnd = Regex("""end\\s*[=:]\\s*\\[(\\d+)\\s*[,\uff0c]\\s*(\\d+)]""").find(actionText)
+        val dur = Regex("""duration\\s*[=:]\\s*(\\d+)""").find(actionText)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        val pkg = Regex("""(?:package|app)\\s*[=:]\\s*["']?([^"',)]+)""").find(actionText)?.groupValues?.getOrNull(1) ?: ""
 
-        return when (action) {
+        val think = actionText.substringBefore("do(", actionText.substringBefore("finish", "").take(200))
+
+        return when (action.trim()) {
             "Tap", "Double Tap" ->
-                LocateResult(true, normX(ex), normY(ey), action, thinking = thinking)
-            "LongPress" ->
-                LocateResult(true, normX(ex), normY(ey), action, duration = dur, thinking = thinking)
-            "Type", "Type_Name" ->
-                LocateResult(true, normX(ex), normY(ey), action, text = txt, thinking = thinking)
+                LocateResult(true, normX(ex), normY(ey), action, thinking = think)
+            "Long Press", "LongPress" ->
+                LocateResult(true, normX(ex), normY(ey), "LongPress", duration = dur, thinking = think)
+            "Type", "Type_Name", "TypeName" ->
+                LocateResult(true, normX(ex), normY(ey), "Type", text = txt, thinking = think)
             "Swipe" -> {
                 val sxe = swStart?.groupValues?.get(1)?.toIntOrNull() ?: 0
                 val sye = swStart?.groupValues?.get(2)?.toIntOrNull() ?: 0
                 val exe = swEnd?.groupValues?.get(1)?.toIntOrNull() ?: 0
                 val eye = swEnd?.groupValues?.get(2)?.toIntOrNull() ?: 0
-                LocateResult(true, normX(ex), normY(ey), action, thinking = thinking,
+                LocateResult(true, ex, ey, action, thinking = think,
                     startX = normX(sxe), startY = normY(sye), endX = normX(exe), endY = normY(eye), duration = dur)
             }
             "Launch" ->
-                LocateResult(true, action = "Launch", packageName = pkg.ifBlank { txt }, thinking = thinking)
+                LocateResult(true, action = "Launch", packageName = pkg.ifBlank { txt }, thinking = think)
             "Wait" ->
-                LocateResult(true, action = "Wait", duration = if (dur > 0) dur else 1500, thinking = thinking)
-            "Back" -> LocateResult(true, action = "Back", thinking = thinking)
-            "Home" -> LocateResult(true, action = "Home", thinking = thinking)
-            else -> LocateResult(false, errorReason = "未知动作: $action")
+                LocateResult(true, action = "Wait", duration = if (dur > 0) dur else 1500, thinking = think)
+            "Back" -> LocateResult(true, action = "Back", thinking = think)
+            "Home" -> LocateResult(true, action = "Home", thinking = think)
+            else -> LocateResult(false, errorReason = "未知动作: $action (${content.take(80)})")
         }
     }
 
-    /** 快速探测: 视觉模型是否可用 (连通性测试) */fun probe(ctx: Context, settings: UserSettings): String = withContext(Dispatchers.IO) {
+    /** 快速探测 */suspend fun probe(ctx: Context, settings: UserSettings): String = withContext(Dispatchers.IO) {
         if (!settings.visionEnabled) return@withContext "视觉模型未启用"
         if (settings.visionApiKey.isBlank()) return@withContext "未配置 API Key"
 
