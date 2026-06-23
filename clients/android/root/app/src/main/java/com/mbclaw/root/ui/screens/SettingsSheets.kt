@@ -195,17 +195,10 @@ fun PermissionsDetailDialog(ctx: android.content.Context, onDismiss: () -> Unit)
     var picking by remember { mutableStateOf<String?>(null) }
 
     fun jumpToAppSettings() {
-        // 优先跳转权限管理页，回退到应用详情
-        val i = if (android.os.Build.VERSION.SDK_INT >= 31) {
-            android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_PERMISSIONS).apply {
-                putExtra(android.content.Intent.EXTRA_PACKAGE_NAME, ctx.packageName)
-            }
-        } else {
-            android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = android.net.Uri.parse("package:${ctx.packageName}")
-            }
+        val i = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = android.net.Uri.fromParts("package", ctx.packageName, null)
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         ctx.startActivity(i)
     }
 
