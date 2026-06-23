@@ -19,7 +19,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mbclaw.root.BuildConfig
@@ -134,6 +137,8 @@ private fun ChatPage(
     onInfoClick: () -> Unit,
 ) {
     var showAssistants by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
@@ -147,7 +152,6 @@ private fun ChatPage(
                     }
                 },
                 navigationIcon = {
-                    // 左侧抽屉按钮：MiClaw 是圆形头像，我们用 ☰
                     IconButton(onClick = onMenuClick,
                         modifier = Modifier.padding(8.dp)) {
                         Surface(shape = RoundedCornerShape(50),
@@ -164,10 +168,10 @@ private fun ChatPage(
                     IconButton(onClick = { vm.newSession() }) {
                         Icon(Icons.Filled.Add, "新对话")
                     }
-                    // 助手选择
-                    IconButton(onClick = { showAssistants = true }) {
-                        Text("🦊", style = MaterialTheme.typography.titleMedium)
-                    }
+                    // 右滑打开助手，用文字提示替代原来的 🦊 按钮
+                    Text("← 右滑助手", style = MaterialTheme.typography.labelSmall,
+                         color = MaterialTheme.colorScheme.outline,
+                         modifier = Modifier.padding(end = 8.dp))
                     IconButton(onClick = onInfoClick) {
                         Surface(shape = RoundedCornerShape(50),
                                 color = MaterialTheme.colorScheme.surfaceVariant,
@@ -185,7 +189,24 @@ private fun ChatPage(
             )
         }
     ) { padding ->
-        Box(Modifier.padding(padding)) {
+        Box(
+            Modifier
+                .padding(padding)
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            // 右滑超过阈值打开助手
+                            showAssistants = true
+                        },
+                        onHorizontalDrag = { _, dragAmount ->
+                            // 从右边缘向左滑动才触发
+                            if (dragAmount < -30) {
+                                showAssistants = true
+                            }
+                        }
+                    )
+                }
+        ) {
             ChatScreen(vm)
         }
     }
