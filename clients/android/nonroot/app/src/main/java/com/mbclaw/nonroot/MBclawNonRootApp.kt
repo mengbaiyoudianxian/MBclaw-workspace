@@ -1,24 +1,22 @@
 package com.mbclaw.nonroot
 
 import android.app.Application
+import android.app.NotificationChannel
+import android.app.NotificationManager
 
-/**
- * MBclaw Lite — 非Root版
- *
- * 模仿 GPT + MiClaw 融合的聊天体验
- * MBclaw 品牌标识 + 记忆系统 + 基础AI对话
- * 不需要系统级权限
- */
 class MBclawNonRootApp : Application() {
-
-    var serverUrl = "http://47.83.2.188:8000"
-    var serverApiKey = ""
-
     override fun onCreate() {
         super.onCreate()
         instance = this
+        com.mbclaw.nonroot.data.Endpoints.warmUp(this)
+        createNotificationChannels()
     }
-
+    private fun createNotificationChannels() {
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(NotificationChannel("mbclaw_agent", "MBclaw Agent", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            description = "MBclaw 通知"
+        })
+    }
     companion object {
         lateinit var instance: MBclawNonRootApp
             private set

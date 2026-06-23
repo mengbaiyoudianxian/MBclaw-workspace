@@ -12,9 +12,10 @@ class FuzzyClicker {
 
     data class FuzzyResult(
         val keyword: String,
-        val bounds: Rect,              // 边界框 (像素坐标)
+        val bounds: Rect,              // 边界框 (像素坐标), 0-size表示仅关键词匹配无坐标
         val confidence: Float,
         val method: String,            // "keyword" | "pattern" | "historical"
+        val positionKnown: Boolean = false,  // true=有坐标, false=仅关键词命中
     )
 
     // 内置关键词库
@@ -33,16 +34,16 @@ class FuzzyClicker {
         put("登录", listOf("登录", "注册", "绑定", "授权", "验证"))
     }
 
-    /** 尝试匹配关键词 */
+    /** 尝试匹配关键词 — 仅表示"知道要找什么"，无坐标 */
     fun matchKeyword(operationDesc: String): FuzzyResult? {
         val desc = operationDesc.lowercase().trim()
         for ((category, keywords) in keywordLibrary) {
             for (kw in keywords) {
                 if (desc.contains(kw.lowercase())) {
-                    // 命中关键词，返回占位坐标 (具体坐标由精定位补充)
                     return FuzzyResult(
                         keyword = kw, bounds = Rect(0, 0, 0, 0),
-                        confidence = 0.6f, method = "keyword"
+                        confidence = 0.6f, method = "keyword",
+                        positionKnown = false  // ★ BugB修复: 关键词匹配没有坐标
                     )
                 }
             }
@@ -50,7 +51,7 @@ class FuzzyClicker {
         return null
     }
 
-    /** 基于历史经验匹配(需要操作记忆模块配合) */
+    /** 基于历史经验匹配 — 有真实坐标 */
     fun matchHistorical(screenSignature: String, operationDesc: String, memory: OperationMemory): FuzzyResult? {
         val pastSuccess = memory.findSimilar(screenSignature, operationDesc)
         if (pastSuccess != null && pastSuccess.confidence >= 0.8f) {
@@ -58,7 +59,8 @@ class FuzzyClicker {
                 keyword = pastSuccess.operationDesc,
                 bounds = Rect(pastSuccess.x - 10, pastSuccess.y - 10, pastSuccess.x + 10, pastSuccess.y + 10),
                 confidence = pastSuccess.confidence,
-                method = "historical"
+                method = "historical",
+                positionKnown = true  // ★ 历史记忆有真实坐标
             )
         }
         return null

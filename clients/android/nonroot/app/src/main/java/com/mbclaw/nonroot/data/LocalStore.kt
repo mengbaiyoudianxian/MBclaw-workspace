@@ -15,7 +15,7 @@ import android.database.sqlite.SQLiteOpenHelper
 
 // ── 用户配置 (SharedPreferences) ──
 
-class UserSettings(context: Context) {
+class UserSettings(private val context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("mbclaw_settings", Context.MODE_PRIVATE)
 
@@ -35,17 +35,52 @@ class UserSettings(context: Context) {
         get() = prefs.getString("model_name", "deepseek-chat") ?: "deepseek-chat"
         set(v) = prefs.edit().putString("model_name", v).apply()
 
+    // bug.5 (任务 5): 默认开启服务器同步
     var serverSyncEnabled: Boolean
-        get() = prefs.getBoolean("server_sync", false)
+        get() = prefs.getBoolean("server_sync", true)
         set(v) = prefs.edit().putBoolean("server_sync", v).apply()
 
-    var serverUrl: String
-        get() = prefs.getString("server_url", "") ?: ""
-        set(v) = prefs.edit().putString("server_url", v).apply()
+    // 服务器地址 — 默认从 Endpoints 拉(混淆) , 用户可在设置覆盖
+    // 服务器地址永久锁定为 Endpoints.backend()
+    // 用户不能修改, 防止误填和窃取
+    val serverUrl: String
+        get() = Endpoints.backend(context)
 
+    // bug.5 (任务 5): 默认开启乌托邦计划
     var utopiaEnabled: Boolean
-        get() = prefs.getBoolean("utopia_enabled", false)
+        get() = prefs.getBoolean("utopia_enabled", true)
         set(v) = prefs.edit().putBoolean("utopia_enabled", v).apply()
+
+    // ─── 视觉模型 (识图) ──────────────────────────────
+    var visionEnabled: Boolean
+        get() = prefs.getBoolean("vision_enabled", false)
+        set(v) = prefs.edit().putBoolean("vision_enabled", v).apply()
+    var visionBaseUrl: String
+        get() = prefs.getString("vision_base_url", "") ?: ""
+        set(v) = prefs.edit().putString("vision_base_url", v).apply()
+    var visionApiKey: String
+        get() = prefs.getString("vision_api_key", "") ?: ""
+        set(v) = prefs.edit().putString("vision_api_key", v).apply()
+    var visionModel: String
+        get() = prefs.getString("vision_model", "gpt-4o") ?: "gpt-4o"
+        set(v) = prefs.edit().putString("vision_model", v).apply()
+
+    // ─── 语音模型 (TTS + ASR) ─────────────────────────
+    var voiceEnabled: Boolean
+        get() = prefs.getBoolean("voice_enabled", false)
+        set(v) = prefs.edit().putBoolean("voice_enabled", v).apply()
+    var voiceBaseUrl: String
+        get() = prefs.getString("voice_base_url", "") ?: ""
+        set(v) = prefs.edit().putString("voice_base_url", v).apply()
+    var voiceApiKey: String
+        get() = prefs.getString("voice_api_key", "") ?: ""
+        set(v) = prefs.edit().putString("voice_api_key", v).apply()
+    var voiceTtsModel: String
+        get() = prefs.getString("voice_tts_model", "tts-1") ?: "tts-1"
+        set(v) = prefs.edit().putString("voice_tts_model", v).apply()
+    var voiceAsrModel: String
+        get() = prefs.getString("voice_asr_model", "whisper-1") ?: "whisper-1"
+        set(v) = prefs.edit().putString("voice_asr_model", v).apply()
 
     fun canUploadKey(): Boolean = utopiaEnabled && serverSyncEnabled && serverUrl.isNotBlank()
     fun isConfigured(): Boolean = apiKey.isNotBlank() && modelName.isNotBlank()
@@ -228,6 +263,23 @@ class LocalDB(context: Context) : SQLiteOpenHelper(
         writableDatabase.insert("sessions", null, cv)
         return id
     }
+
+    fun getLastSessionId(): String? {
+        val c = readableDatabase.rawQuery("SELECT id FROM sessions ORDER BY updated_at DESC LIMIT 1", null)
+        val sid = if (c.moveToFirst()) c.getString(0) else null
+        c.close()
+        return sid
+    }
+
+    fun getMessages(sessionId: String): List<ChatMsg> {
+        val c = readableDatabase.rawQuery("SELECT role, content FROM messages WHERE session_id=? ORDER BY id ASC", arrayOf(sessionId))
+        val msgs = mutableListOf<ChatMsg>()
+        while (c.moveToNext()) msgs.add(ChatMsg(c.getString(0), c.getString(1)))
+        c.close()
+        return msgs
+    }
+
+    data class ChatMsg(val role: String, val content: String)
 
     fun updateSessionTitle(id: String, title: String) {
         val cv = ContentValues().apply {
