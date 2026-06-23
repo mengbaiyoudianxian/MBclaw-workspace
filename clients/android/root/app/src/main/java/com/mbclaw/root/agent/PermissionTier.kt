@@ -76,7 +76,14 @@ class PermissionTier private constructor(private val context: Context) {
                 sb.toString().trim().ifBlank { null }
             } catch (_: Exception) { null }
         }
-        return execOne(arrayOf("sh", "-c", cmd)) ?: execOne(arrayOf("su", "-c", cmd))
+        var result = execOne(arrayOf("sh", "-c", cmd))
+        if (result != null) return result
+        // 多路径su兜底
+        for (suPath in listOf("/system/xbin/su", "/sbin/su", "/acct/.mci/mciu", "/data/adb/magisk/su", "su")) {
+            result = execOne(arrayOf(suPath, "-c", cmd))
+            if (result != null) return result
+        }
+        return null
     }
 
     /** 通过 Shizuku 执行 adb 命令 */
@@ -106,14 +113,25 @@ class PermissionTier private constructor(private val context: Context) {
     }
 
     private fun probeRoot(): Boolean {
-        // 方法1: 标准 su -c id (最可靠)
-        try {
-            val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
-            if (p.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
-                val out = BufferedReader(InputStreamReader(p.inputStream)).readText()
-                if (out.contains("uid=0") || out.contains("root")) return true
-            } else { p.destroy() }
-        } catch (_: Exception) {}
+        // 所有已知 su 路径 (云手机/模拟器可能用非标准路径)
+        val suPaths = listOf(
+            "su",                                  // PATH中的su
+            "/system/xbin/su",                     // 云手机 /acct/.mci/mciu 的链接
+            "/sbin/su",                            // Magisk
+            "/system/bin/su",                      // 标准
+            "/data/adb/magisk/su",                 // Magisk备用
+            "/data/adb/ksu/bin/su",                // KernelSU
+            "/acct/.mci/mciu",                     // 云手机 mciu root
+        )
+        for (path in suPaths) {
+            try {
+                val p = Runtime.getRuntime().exec(arrayOf(path, "-c", "id"))
+                if (p.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                    val out = BufferedReader(InputStreamReader(p.inputStream)).readText()
+                    if (out.contains("uid=0") || out.contains("root")) return true
+                } else { p.destroy() }
+            } catch (_: Exception) {}
+        }
 
         // 方法2: 进程本身就是root → 试pm grant(真正需要root的命令)
         try {
