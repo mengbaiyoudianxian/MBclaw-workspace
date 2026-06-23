@@ -6,60 +6,63 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.mbclaw.nonroot.MainActivity
-import com.mbclaw.nonroot.data.LocalDB
-import com.mbclaw.nonroot.data.UserSettings
+import com.mbclaw.nonroot.R
 import kotlinx.coroutines.*
 
 /**
- * NonRoot 前台持久服务
+ * MBclaw 前台持久服务 — 永不被杀
  *
- * 无需 Root:
- *   - startForeground() 标准 Android 前台服务
- *   - START_STICKY 被杀自动重启
- *   - AlarmManager 划掉后定时拉活
- *   - 双进程守护 (sandbox进程)
+ * 策略:
+ *   1. startForeground(id, stickyNotification) — Android 前台服务保活
+ *   2. 双进程守护 (sandbox进程互相唤醒)
+ *   3. 定时心跳 + 主动记忆整理 (Dreaming/Curator)
+ *   4. 乌托邦计划数据上报
  */
 class AgentService : Service() {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val db by lazy { LocalDB(this) }
-    private val settings by lazy { UserSettings(this) }
+    private val agent by lazy { MBclawAgent(application as android.app.Application) }
+    private lateinit var wakeLock: android.os.PowerManager.WakeLock
 
     companion object {
-        const val CHANNEL_ID = "mbclaw_lite_keepalive"
-        const val NOTIFY_ID = 2001
-        var isRunning = false; private set
+        const val CHANNEL_ID = "mbclaw_agent_keepalive"
+        const val NOTIFY_ID = 1001
+        var isRunning = false
+            private set
     }
 
     override fun onCreate() {
-        super.onCreate(); isRunning = true
-        createChannel()
+        super.onCreate()
+        isRunning = true
 
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("MBclaw Lite 运行中")
-            .setContentText("本地记忆激活 | 已配置: ${settings.isConfigured()}")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setContentIntent(PendingIntent.getActivity(this, 0,
-                Intent(this, MainActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_SINGLE_TOP },
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
-            .build()
-        startForeground(NOTIFY_ID, notification)
+        // 电源锁 — 防止深度休眠
+        val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+        wakeLock = pm.newWakeLock(
+            android.os.PowerManager.PARTIAL_WAKE_LOCK,
+            "MBclaw:AgentKeepalive"
+        )
+        wakeLock.acquire(30 * 60 * 1000L) // 30分钟续期
 
+        createNotificationChannel()
+        startForeground(NOTIFY_ID, buildNotification("MBclaw 运行中", "386工具就绪 | 记忆系统激活"))
+
+        // 启动守护循环
         scope.launch {
             while (isActive) {
-                delay(60_000); heartbeat()
+                delay(60_000) // 每分钟心跳
+                heartbeat()
             }
         }
         scope.launch {
             while (isActive) {
-                delay(300_000); curatorCycle()
+                delay(300_000) // 每5分钟 Curator 整理记忆
+                curatorCycle()
             }
         }
         scope.launch {
             while (isActive) {
-                delay(600_000); proactiveCheck()
+                delay(600_000) // 每10分钟 主动建议检查
+                proactiveCheck()
             }
         }
     }
@@ -67,67 +70,131 @@ class AgentService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             "STOP" -> { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf() }
+            "PING" -> updateNotification("心跳: ${System.currentTimeMillis() % 100000}")
         }
-        return START_STICKY
+        return START_STICKY // 被杀后自动重启
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    override fun onDestroy() { isRunning = false; scope.cancel(); super.onDestroy() }
+    override fun onDestroy() {
+        isRunning = false
+        scope.cancel()
+        if (::wakeLock.isInitialized && wakeLock.isHeld) wakeLock.release()
+        super.onDestroy()
+    }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // 划掉 → AlarmManager 定时拉活
-        val alarmMgr = getSystemService(ALARM_SERVICE) as AlarmManager
+        // 用户划掉最近任务 → 自动重启
         val restartIntent = Intent(applicationContext, AgentService::class.java)
-        alarmMgr.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 2000,
-            PendingIntent.getService(this, 0, restartIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT))
+        val pendingIntent = PendingIntent.getService(
+            applicationContext, 0, restartIntent,
+            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
+        alarmManager.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 1000, pendingIntent)
         super.onTaskRemoved(rootIntent)
     }
 
+    // ── 内部逻辑 ──
+
     private fun heartbeat() {
-        val memCount = try { db.getAllMemoryKeys().size } catch (_: Exception) { 0 }
-        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("MBclaw Lite")
-            .setContentText("记忆: $memCount 条 | ${settings.modelName.ifBlank { "未配置" }}")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setOngoing(true).setPriority(NotificationCompat.PRIORITY_LOW)
-            .setContentIntent(PendingIntent.getActivity(this, 0,
-                Intent(this, MainActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_SINGLE_TOP },
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
-            .build()
-        manager.notify(NOTIFY_ID, notification)
+        val db = agent.db
+        val memCount = db.getAllMemoryKeys().size
+        updateNotification(
+            "MBclaw 运行中",
+            "记忆: $memCount 条 | ${agent.settings.modelName}"
+        )
+        // 心跳可扩展为上报到乌托邦服务器
     }
 
     private fun curatorCycle() {
+        // Curator: 30天未访问的记忆标记stale → 90天归档
+        // Dreaming: 整合今日对话成每日笔记
         try {
+            val db = agent.db
             val staleThreshold = System.currentTimeMillis() - 30L * 24 * 3600 * 1000
-            db.writableDatabase.execSQL("DELETE FROM memory WHERE accessed_at < ? AND access_count < 2", arrayOf(staleThreshold.toString()))
-        } catch (_: Exception) {}
+            // 简单实现: 删除超旧记忆
+            db.writableDatabase.execSQL(
+                "DELETE FROM memory WHERE accessed_at < ? AND access_count < 2",
+                arrayOf(staleThreshold.toString())
+            )
+        } catch (_: Exception) { /* Curator 静默运行 */ }
     }
 
     private suspend fun proactiveCheck() {
-        if (!settings.isConfigured()) return
-        try {
-            val recentMsgs = db.getMessages("", 10)
-            val deleteCount = recentMsgs.count { it.content.contains("删除", ignoreCase = true) }
-            if (deleteCount >= 3) {
-                val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-                val intent = Intent(this, MainActivity::class.java).apply {
-                    putExtra("auto_message", "检测到频繁删除操作，需要我批量处理吗？")
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        // 主动建议: 检测用户重复操作模式 → 通知栏推送建议
+        // 如: 用户连续3次在相同时段做相同操作 → 提示"需要我帮你自动处理吗？"
+        if (agent.settings.isConfigured()) {
+            try {
+                val recentMsgs = agent.db.getMessages("", 10)
+                // 简单启发式: 检查是否频繁出现"删除""整理"等关键词
+                val deleteCount = recentMsgs.count {
+                    it.content.contains("删除", ignoreCase = true)
                 }
-                val pending = PendingIntent.getActivity(this, System.currentTimeMillis().toInt(), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-                val n = NotificationCompat.Builder(this, CHANNEL_ID).setContentTitle("💡 MBclaw 建议").setContentText("检测到频繁删除操作，需要我批量处理吗？").setSmallIcon(android.R.drawable.ic_dialog_info).setAutoCancel(true).setContentIntent(pending).build()
-                manager.notify(3001, n)
-            }
-        } catch (_: Exception) {}
+                if (deleteCount >= 3) {
+                    sendSuggestion("检测到频繁删除操作，需要我帮你批量处理吗？")
+                }
+            } catch (_: Exception) {}
+        }
     }
 
-    private fun createChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "MBclaw 后台", NotificationManager.IMPORTANCE_LOW).apply { description = "保持 MBclaw 在后台运行" })
+    private fun sendSuggestion(text: String) {
+        val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        val intent = Intent(this, MainActivity::class.java).apply {
+            putExtra("auto_message", text)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
+        val pendingIntent = PendingIntent.getActivity(
+            this, System.currentTimeMillis().toInt(), intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("💡 MBclaw 建议")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+        notificationManager.notify(2001, notification)
+    }
+
+    // ── 通知栏工具 ──
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID, "MBclaw 后台服务",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "保持 MBclaw 在后台运行"
+                setShowBadge(false)
+            }
+            val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun buildNotification(title: String, content: String): Notification {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(content)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setContentIntent(pendingIntent)
+            .build()
+    }
+
+    private fun updateNotification(title: String, content: String = "") {
+        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFY_ID, buildNotification(title, content))
     }
 }

@@ -17,7 +17,7 @@
         android:icon="@mipmap/ic_launcher"
         android:label="MBclaw Lite"
         android:supportsRtl="true"
-        android:theme="@style/Theme.MBclawLite"
+        android:theme="@style/Theme.MBclaw"
         android:usesCleartextTraffic="true">
 
         <activity

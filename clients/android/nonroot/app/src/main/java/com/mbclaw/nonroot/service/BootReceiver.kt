@@ -5,7 +5,7 @@ import android.content.Context
 import android.content.Intent
 import com.mbclaw.nonroot.agent.AgentService
 
-/** 开机自启 AgentService */
+/** 开机自启 — 启动 AgentService */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
@@ -19,13 +19,12 @@ class BootReceiver : BroadcastReceiver() {
     }
 }
 
-/** 主动建议广播 */
+/** 主动建议广播处理 */
 class ProactiveReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        // 由 AgentService 处理
-        context.startForegroundService(Intent(context, AgentService::class.java).apply {
-            putExtra("proactive", true)
-            putExtra("message", intent.getStringExtra("message") ?: "")
-        })
+        val message = intent.getStringExtra("message") ?: return
+        val action = intent.getStringExtra("action") ?: return
+        // 通过通知栏告知用户
+        // 如果 AgentService 在运行，它会处理这个建议
     }
 }

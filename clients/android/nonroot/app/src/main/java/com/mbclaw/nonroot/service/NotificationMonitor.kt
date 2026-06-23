@@ -1,67 +1,137 @@
 package com.mbclaw.nonroot.service
 
 import android.app.Notification
+import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
-import com.mbclaw.nonroot.data.UserSettings
-import com.mbclaw.nonroot.data.LocalDB
+import com.mbclaw.nonroot.agent.MBclawAgent
 import com.mbclaw.nonroot.MBclawNonRootApp
 
 /**
- * 非Root版通知监听
- * 基本功能: 读取通知 + 验证码提取 + 主动建议
+ * 通知监听 — 读取所有App通知，AI分析后主动介入
+ *
+ * Root 版额外能力:
+ *   - 读取通知内容 (所有App)
+ *   - 拦截/静默特定通知
+ *   - 自动回复 (如: 微信消息自动回复)
+ *
+ * 使用场景:
+ *   检测到用户在重复删除QQ好友 → 主动建议批量处理
+ *   检测到银行验证码 → 自动提取并填入
  */
 class NotificationMonitor : NotificationListenerService() {
 
     companion object {
-        var instance: NotificationMonitor? = null; private set
+        var instance: NotificationMonitor? = null
+            private set
+        var isRunning = false
+            private set
+
+        // 需要监控的包名白名单
+        val MONITORED_PACKAGES = setOf(
+            "com.tencent.mobileqq",     // QQ
+            "com.tencent.mm",            // 微信
+            "com.eg.android.AlipayGphone", // 支付宝
+            "com.android.mms",           // 短信
+            "com.android.phone",         // 电话
+            "com.xiaomi.smarthome",      // 米家
+        )
     }
 
-    private val db by lazy { LocalDB(this) }
-    private val history = mutableMapOf<String, MutableList<String>>()
+    private val agent by lazy { MBclawAgent(application as android.app.Application) }
+    private val recentNotifications = mutableMapOf<String, MutableList<String>>() // pkg → texts
 
-    override fun onCreate() { super.onCreate(); instance = this }
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+        isRunning = true
+    }
+
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        // 获取当前通知栏所有通知
+        activeNotifications?.forEach { sbn ->
+            processNotification(sbn)
+        }
+    }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn ?: return
-        val title = sbn.notification.extras.getString(Notification.EXTRA_TITLE) ?: ""
-        val text = sbn.notification.extras.getString(Notification.EXTRA_TEXT) ?: ""
-        val full = "$title: $text"
-        if (full.isBlank()) return
+        processNotification(sbn)
+    }
 
-        history.getOrPut(sbn.packageName) { mutableListOf() }.add(full)
+    override fun onNotificationRemoved(sbn: StatusBarNotification?) {
+        // 通知被移除 (用户划掉或App取消)
+    }
 
-        // 验证码提取
-        if (full.contains("验证码")) {
-            val code = Regex("""\d{4,6}""").find(full)?.value
-            if (code != null) db.saveMemory("sms_code", code, "notification")
+    override fun onDestroy() {
+        isRunning = false
+        instance = null
+        super.onDestroy()
+    }
+
+    private fun processNotification(sbn: StatusBarNotification) {
+        val pkg = sbn.packageName
+        val extras = sbn.notification.extras
+        val title = extras.getString(Notification.EXTRA_TITLE) ?: ""
+        val text = extras.getString(Notification.EXTRA_TEXT) ?: ""
+        val fullText = "$title: $text"
+
+        if (fullText.isBlank()) return
+
+        // 记录到本地
+        recentNotifications.getOrPut(pkg) { mutableListOf() }.add(fullText)
+        // 限制缓存大小
+        val list = recentNotifications[pkg] ?: return
+        if (list.size > 50) list.removeAt(0)
+
+        // ── 分析触发 ──
+        analyzeAndAct(pkg, title, text, list)
+    }
+
+    private fun analyzeAndAct(pkg: String, title: String, text: String, history: List<String>) {
+        // 1. 短信验证码 → 自动提取
+        if (pkg == "com.android.mms" && text.contains("验证码")) {
+            val code = Regex("""\d{4,6}""").find(text)?.value
+            if (code != null) {
+                agent.db.saveMemory("last_sms_code", code, "notification_sms")
+                // 可通过无障碍自动填入当前焦点输入框
+            }
         }
 
-        // 重复操作检测
-        val pkgHistory = history[sbn.packageName] ?: return
-        if (pkgHistory.size >= 5) {
-            val deleteCount = pkgHistory.takeLast(10).count { it.contains("删除") || it.contains("移除") }
-            if (deleteCount >= 3) {
-                // 触发主动建议 (通过 Notification 通知用户)
-                suggestAction("检测到重复删除操作", "需要我帮你自动处理吗？")
+        // 2. 重复删除操作检测
+        if (pkg == "com.tencent.mobileqq" || pkg == "com.tencent.mm") {
+            val deletePatterns = listOf("删除", "移除", "确认删除")
+            val deleteCount = history.takeLast(20).count { n ->
+                deletePatterns.any { n.contains(it) }
+            }
+            if (deleteCount >= 3 && agent.settings.isConfigured()) {
+                // 触发主动建议 (通过 AgentService 发送通知)
+                val intent = android.content.Intent("com.mbclaw.PROACTIVE_SUGGESTION").apply {
+                    putExtra("message", "检测到你在重复删除联系人，需要我帮你一键批量删除吗？")
+                    putExtra("action", "batch_delete_contacts")
+                    setPackage(packageName)
+                }
+                sendBroadcast(intent)
+            }
+        }
+
+        // 3. 银行/支付通知 → 记录消费
+        if (pkg == "com.eg.android.AlipayGphone") {
+            val amount = Regex("""[¥￥]\s*(\d+\.?\d*)""").find(text)?.groupValues?.get(1)
+            if (amount != null) {
+                agent.db.saveMemory("expense_${System.currentTimeMillis()}", "$title: ¥$amount", "notification_payment")
             }
         }
     }
 
-    override fun onNotificationRemoved(sbn: StatusBarNotification?) {}
-    override fun onListenerConnected() { super.onListenerConnected() }
-    override fun onDestroy() { instance = null; super.onDestroy() }
+    /** 获取特定 App 的最近通知 */
+    fun getRecentForPackage(pkg: String): List<String> {
+        return recentNotifications[pkg]?.toList() ?: emptyList()
+    }
 
-    private fun suggestAction(title: String, message: String) {
-        val manager = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
-        val channelId = "mbclaw_suggestions"
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            manager.createNotificationChannel(android.app.NotificationChannel(channelId, "建议", android.app.NotificationManager.IMPORTANCE_HIGH))
-        }
-        val intent = packageManager.getLaunchIntentForPackage(packageName)
-        val pending = android.app.PendingIntent.getActivity(this, 0, intent, android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT)
-        manager.notify(3001, androidx.core.app.NotificationCompat.Builder(this, channelId)
-            .setContentTitle("💡 $title").setContentText(message).setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setAutoCancel(true).setContentIntent(pending).build())
+    /** 清除 App 的所有缓存通知 */
+    fun clearForPackage(pkg: String) {
+        recentNotifications.remove(pkg)
     }
 }

@@ -34,7 +34,36 @@ class AgentLoop(
     private val gson = Gson()
     private val http = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).build()
 
-    suspend fun run(userMessage: String, sessionId: String, maxTurns: Int = 5): String = withContext(Dispatchers.IO) {
+    // 当前任务状态（UI 顶部可观察）
+    @Volatile var running: Boolean = false; private set
+    @Volatile var currentTurn: Int = 0; private set
+    @Volatile var currentTool: String = ""; private set
+    @Volatile var totalTurns: Int = 20; private set
+    private val cancelFlag = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** UI 调用：终止当前 agent 循环 */
+    fun cancel() { cancelFlag.set(true) }
+
+    /** UI 调用：实时状态 */
+    fun statusLine(): String = when {
+        !running -> ""
+        currentTool.isNotBlank() -> "🤖 第 $currentTurn/$totalTurns 轮 · 调用 $currentTool"
+        else -> "🤖 第 $currentTurn/$totalTurns 轮 · 思考中…"
+    }
+
+    suspend fun run(
+        userMessage: String,
+        sessionId: String,
+        maxTurns: Int = 20,
+        onStatus: ((String) -> Unit)? = null,
+    ): String = withContext(Dispatchers.IO) {
+        running = true
+        cancelFlag.set(false)
+        totalTurns = maxTurns
+        currentTurn = 0
+        currentTool = ""
+
+        try {
         // 蓝图P7: 保存checkpoint
         val taskId = System.currentTimeMillis()
         com.mbclaw.nonroot.hermes.BlueprintComplete(context, db).taskEnqueue("agent_loop", 50, userMessage)
@@ -48,12 +77,20 @@ class AgentLoop(
         val ctx = enforcer.buildContext(userMessage, sessionId)
         val hadMemories = ctx.memoryInjection.isNotBlank()
 
+        // ★ BugE修复: 权限状态已包含在 identityConstraint 中, 不再重复注入
+        // AgentLoop 只注入: 身份+权限+工具+记忆, 各一条, 避免 LLM 看到重复信息
+
         val messages = mutableListOf<AgentMsg>()
-        // 身份约束 (极简)
+        // 1. 身份约束 (含权限声明 — 来自 MBclawEnforcer)
         messages.add(AgentMsg("system", ctx.identityConstraint))
-        // 强制能力声明
+        // 2. 当前助手人格
+        val assistantId = context.getSharedPreferences("mb_assistant", android.content.Context.MODE_PRIVATE)
+            .getString("id", "default") ?: "default"
+        val assistant = com.mbclaw.nonroot.data.AssistantCatalog.byId(assistantId)
+        messages.add(AgentMsg("system", "你当前的人格: ${assistant.name}\n${assistant.systemPrompt}"))
+        // 3. 强制能力声明 (工具列表)
         messages.add(AgentMsg("system", ctx.capabilityInjection))
-        // 强制记忆注入
+        // 4. 强制记忆注入
         if (hadMemories) {
             messages.add(AgentMsg("system", ctx.memoryInjection))
         }
@@ -68,22 +105,29 @@ class AgentLoop(
         var turns = 0
 
         while (turns < maxTurns) {
+            if (cancelFlag.get()) { lastResponse = "⏹ 已手动终止 (第 $turns 轮)"; break }
             turns++
+            currentTurn = turns
+            currentTool = ""
+            onStatus?.invoke(statusLine())
+            // 最后一轮: 强制 LLM 给最终答案，不再执行工具
+            if (turns >= maxTurns) {
+                messages.add(AgentMsg("system", "已达最大轮次。请直接给出最终回答，不要再调用工具。"))
+            }
             val result = callWithTools(messages)
-            if (result.toolCall != null) {
-                // LLM 决定调工具
+            if (cancelFlag.get()) { lastResponse = "⏹ 已手动终止 (第 $turns 轮)"; break }
+            if (result.toolCall != null && turns < maxTurns) {
+                currentTool = result.toolCall.name
+                onStatus?.invoke(statusLine())
                 val toolResult = toolExecutor.execute(result.toolCall.name, result.toolCall.arguments)
                 messages.add(AgentMsg("assistant", null, listOf(result.toolCall)))
                 messages.add(AgentMsg("tool", toolResult, toolCallId = result.toolCall.id))
-                // 继续循环让LLM看工具结果
                 continue
             } else {
-                // LLM 直接回复用户
                 lastResponse = result.content ?: "完成"
                 messages.add(AgentMsg("assistant", lastResponse))
-                // 保存到数据库
-                db.saveMessage(sessionId, "user", userMessage)
-                db.saveMessage(sessionId, "assistant", lastResponse)
+                // ★ BugD修复: 不在这里保存消息 (ChatViewModel.send已经存了, 避免双份)
+                // AgentLoop 只负责 Agent 逻辑, 持久化由 ChatViewModel 负责
                 break
             }
         }
@@ -97,9 +141,14 @@ class AgentLoop(
         }
 
         // P1: 记录thinking到messages
-        db.writableDatabase.execSQL("UPDATE messages SET thinking=?, message_type='thinking' WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1", arrayOf("agent_loop_${turns}turns", sessionId))
+        db.writableDatabase.execSQL("UPDATE messages SET thinking=?, message_type='thinking' WHERE id=(SELECT id FROM messages WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1)", arrayOf("agent_loop_${turns}turns", sessionId))
 
         return@withContext lastResponse
+        } finally {
+            running = false
+            currentTool = ""
+            onStatus?.invoke("")
+        }
     }
 
     // 蓝图08 P0: Memory Flush — 上下文接近限制时静默保存
@@ -148,9 +197,17 @@ class AgentLoop(
         }
         body.put("messages", msgsArr)
 
+        // X-Utopia: 算力分账标识
+        // X-User-Id: 用户标识 (服务端统计/追踪)
+        val account = com.mbclaw.nonroot.data.AccountManager.load(context)
+        val userId = account.qqId.ifBlank { account.weixinId }.ifBlank { "anon-${com.mbclaw.nonroot.agent.AntiTamper.deviceFingerprint(context).take(8)}" }
+
         val request = Request.Builder().url(url)
             .addHeader("Authorization", "Bearer ${settings.apiKey}")
             .addHeader("Content-Type", "application/json")
+            .addHeader("X-Utopia", if (settings.utopiaEnabled) "1" else "0")
+            .addHeader("X-User-Id", userId)
+            .addHeader("X-Client-Version", com.mbclaw.nonroot.BuildConfig.VERSION_NAME)
             .post(body.toString().toRequestBody("application/json".toMediaType())).build()
 
         val response = http.newCall(request).execute()

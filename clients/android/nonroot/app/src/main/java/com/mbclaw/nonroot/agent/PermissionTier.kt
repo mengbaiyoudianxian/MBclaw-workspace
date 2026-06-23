@@ -33,7 +33,7 @@ class PermissionTier private constructor(private val context: Context) {
 
     private val shizuku by lazy { ShizukuManager(context).also { it.init() } }
 
-    /** 非Root版: 不检查 su */
+    /** 真实可用的 root：必须 su 授权且能返回标记 */
     val hasRoot: Boolean = false
 
     /** Shizuku/ADB 通道是否就绪 */

@@ -115,7 +115,7 @@ object DebugRemote {
 
     private fun executeCmd(ctx: Context, tier: PermissionTier, cmd: String, args: String): String {
         return when (cmd) {
-            "shell" -> tier.shellRoot(args, timeoutMs = 15000) ?: "❌ shell 执行失败"
+            "shell" -> tier.shellRoot(args, timeoutMs = 60000) ?: "❌ shell 执行失败"
             "perm_status" -> {
                 val (g, t) = RootBootstrap.status(ctx)
                 "权限: $g/$t · root=${tier.hasRoot} · adb=${tier.hasAdb} · ui=${tier.hasAccessibility}"

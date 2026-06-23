@@ -181,6 +181,56 @@ object ProviderCatalog {
             models = listOf("gpt-4o-mini", "claude-3.5-sonnet", "deepseek-chat"),
             notes = "国内中转 / 无需翻墙调OpenAI / 微信支付",
         ),
+        // 新增 ↓
+        LLMProvider(
+            id = "claude-subscription", name = "Claude (订阅 Pro/Max)", baseUrl = "https://api.anthropic.com",
+            region = "INTL",
+            models = listOf("claude-sonnet-4-7", "claude-opus-4-7", "claude-haiku-4-5"),
+            notes = "Pro/Max 订阅版有月度配额, 比按量便宜",
+        ),
+        LLMProvider(
+            id = "chatgpt-plus", name = "ChatGPT (Plus 订阅)", baseUrl = "https://api.openai.com",
+            region = "INTL",
+            models = listOf("gpt-4o", "gpt-4o-mini", "o1-preview", "o1-mini"),
+            notes = "Plus 订阅 $20/月, 也可单独按量买 API",
+        ),
+        LLMProvider(
+            id = "ooapi", name = "OOAPI (Claude 中转)", baseUrl = "https://api.ooapi.cc/v1",
+            region = "INTL",
+            models = listOf("claude-opus-4-7", "claude-sonnet-4-7", "claude-haiku-4-5"),
+            notes = "Claude 国内中转, 无需外币卡",
+        ),
+        LLMProvider(
+            id = "tu-zi", name = "兔子 API", baseUrl = "https://api.tu-zi.com/v1",
+            region = "CN",
+            models = listOf("gpt-4o", "claude-3.5-sonnet", "gemini-2.5-pro", "deepseek-chat"),
+            notes = "国内热门中转 / 微信支付 / 模型多",
+        ),
+        LLMProvider(
+            id = "siliconflow-intl", name = "SiliconFlow (国际)", baseUrl = "https://api.siliconflow.cn/v1",
+            region = "INTL",
+            models = listOf("deepseek-ai/DeepSeek-V3", "Qwen/Qwen2.5-72B-Instruct", "meta-llama/Llama-3.3-70B-Instruct"),
+            notes = "硅基流动 国际版 / 部分开源模型限免",
+            free = true,
+        ),
+        LLMProvider(
+            id = "fireworks", name = "Fireworks AI", baseUrl = "https://api.fireworks.ai/inference/v1",
+            region = "INTL",
+            models = listOf("accounts/fireworks/models/llama-v3p3-70b-instruct", "accounts/fireworks/models/deepseek-v3"),
+            notes = "高性能开源推理 / OpenAI 兼容",
+        ),
+        LLMProvider(
+            id = "perplexity", name = "Perplexity Sonar", baseUrl = "https://api.perplexity.ai",
+            region = "INTL",
+            models = listOf("llama-3.1-sonar-large-128k-online", "llama-3.1-sonar-small-128k-online"),
+            notes = "联网搜索 + LLM / OpenAI 兼容",
+        ),
+        LLMProvider(
+            id = "xai", name = "xAI Grok", baseUrl = "https://api.x.ai/v1",
+            region = "INTL",
+            models = listOf("grok-beta", "grok-vision-beta"),
+            notes = "马斯克 / OpenAI 兼容",
+        ),
         LLMProvider(
             id = "custom", name = "自定义 (OpenAI兼容)", baseUrl = "",
             region = "INTL",

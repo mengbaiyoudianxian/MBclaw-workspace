@@ -49,3 +49,25 @@ data class ApiError(
     val detail: String? = null,
     val message: String? = null,
 )
+
+
+// ── R0-ext 工具系统模型 ──
+
+data class ToolInfo(
+    val id: Int = 0,
+    val name: String = "",
+    val category: String = "",
+    val summary: String = "",
+    val tags: List<String> = emptyList(),
+    val usage_count: Int = 0
+)
+
+data class ToolExecuteRequest(
+    val name: String,
+    val content: String = ""
+)
+
+data class ToolExecuteResponse(
+    val name: String = "",
+    val result: String = ""
+)
