@@ -107,18 +107,26 @@ fun MBclawMainScreen() {
         )
     }
 
-    // BackHandler — 系统返回键统一处理（按 MiClaw 习惯）
-    //   优先级：弹窗 > 抽屉 > 路由栈 pop > 默认退出
+    // BackHandler — 系统返回键统一处理
+    //   优先级：弹窗 > 抽屉 > 路由栈 pop > "再次点击退出" > 回桌面
+    var backPressTime by remember { mutableStateOf(0L) }
     androidx.activity.compose.BackHandler(enabled = true) {
         when {
+            showRootDialog -> showRootDialog = false
             showSetup -> showSetup = false
             showHand -> showHand = false
             showAbout -> showAbout = false
             showAllSessions -> showAllSessions = false
             drawerState.isOpen -> scope.launch { drawerState.close() }
             !pop() -> {
-                // 已在根 (chat)，让系统处理（回桌面）
-                (ctx as? android.app.Activity)?.moveTaskToBack(true)
+                // 已在根 (chat)
+                val now = System.currentTimeMillis()
+                if (now - backPressTime < 2000) {
+                    (ctx as? android.app.Activity)?.moveTaskToBack(true)
+                } else {
+                    backPressTime = now
+                    android.widget.Toast.makeText(ctx, "再次点击退出程序", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
             else -> { /* pop 成功 */ }
         }
