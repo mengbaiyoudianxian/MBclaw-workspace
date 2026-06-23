@@ -231,6 +231,27 @@ fun SettingsPage(
                     subtitle = "看得见点得准 · 校准 / 区块识别 / 模糊点击",
                     onClick = onOpenHand,
                 )
+                SettingDivider()
+                // Termux 环境 (按需下载)
+                SettingItemRow(
+                    "🖥 Termux Linux 环境",
+                    subtitle = "完整 Linux 终端 · 按需从服务器下载 (~200MB)",
+                    onClick = {
+                        val i = android.content.Intent(android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("http://121.199.57.195/termux-bootstrap.zip"))
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        ctx.startActivity(i)
+                    }
+                )
+                SettingDivider()
+                // MCP 插件市场 (预留接口)
+                SettingItemRow(
+                    "🔌 MCP 插件市场",
+                    subtitle = "Model Context Protocol · 连接外部工具 (Google/GitHub/...)",
+                    onClick = {
+                        android.widget.Toast.makeText(ctx, "MCP 市场即将开放，敬请期待", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                )
             }
 
             SectionTitle("乌托邦计划")
