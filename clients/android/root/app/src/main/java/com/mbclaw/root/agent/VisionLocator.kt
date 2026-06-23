@@ -41,36 +41,57 @@ object VisionLocator {
         val success: Boolean,
         val x: Int = 0,           // 物理像素 X
         val y: Int = 0,           // 物理像素 Y
-        val action: String = "",  // "Tap" | "Swipe" | "Type" | "Long Press" | ...
-        val text: String = "",    // Type 动作的文本
+        val action: String = "",  // "Tap" | "Swipe" | "Type" | "Long Press" | "Launch" | "Wait"
+        val text: String = "",    // Type/Launch 动作的参数
         val confidence: Float = 0f,
         val thinking: String = "", // VLM 的思考过程
         val errorReason: String = "",
+        val startX: Int = 0,      // Swipe 起始X
+        val startY: Int = 0,      // Swipe 起始Y
+        val endX: Int = 0,        // Swipe 结束X
+        val endY: Int = 0,        // Swipe 结束Y
+        val duration: Int = 0,    // Swipe/LongPress/Wait 时长(ms)
+        val packageName: String = "", // Launch 包名
     )
 
-    /** 系统提示词 — 精简版，仿 Open-AutoGLM 中文 prompt */
     private fun buildSystemPrompt(): String {
         val today = SimpleDateFormat("yyyy年MM月dd日 EEEE", Locale.CHINESE).format(Date())
         return """
 今天的日期是: $today
-你是一个手机操作智能体。你会收到一张手机屏幕截图和一个操作任务。你必须分析截图，然后输出一个具体的操作指令。
+你是一个手机操作智能体。分析截图后输出操作指令。
 
-输出必须严格按照以下格式：
+输出格式:
 <think>简短推理说明</think>
-<answer>你的操作指令</answer>
+<answer>do(action="动作名", ...)</answer>
 
-操作指令（二选一）：
+支持的全部动作:
+
 1. do(action="Tap", element=[x,y])
-   点击屏幕上的点。坐标 [x,y] 是归一化坐标，x 和 y 范围 0-999，(0,0)是左上角，(999,999)是右下角。
-2. finish(message="原因")
-   任务已完成或无法完成。
+   点击屏幕上的点。坐标归一化0-999。
+
+2. do(action="Type", element=[x,y], text="要输入的文字")
+   先点击element坐标获取焦点，再输入文字。
+
+3. do(action="Swipe", start=[x1,y1], end=[x2,y2], duration=300)
+   从start滑动到end，duration毫秒(默认300)。
+
+4. do(action="LongPress", element=[x,y], duration=1000)
+   长按指定位置。
+
+5. do(action="Wait", duration=1500)
+   等待界面加载，duration毫秒。
+
+6. do(action="Launch", package="com.tencent.mm")
+   启动指定包名的App。
+
+7. finish(message="完成原因")
+   任务完成或无法继续。
 
 【重要规则】
 - 先仔细观察截图，找到目标元素
-- element 坐标是该元素的中心点
-- 如果找不到目标，输出 finish(message="未找到目标")
+- element坐标是该元素的中心点
 - 只输出一个操作，不要一次输出多个
-- 不要输出除 <think>/<answer> 之外的文字
+- 根据任务需求选择合适的动作类型
 """.trimIndent()
     }
 
@@ -130,6 +151,7 @@ object VisionLocator {
             parsed
         } catch (e: Exception) {
             android.util.Log.e(TAG, "VLM 调用失败: ${e.message}")
+            tier.shellRoot("rm /sdcard/mb_vision_*.png 2>/dev/null")
             LocateResult(false, errorReason = "VLM 调用失败: ${e.message}")
         }
     }
@@ -247,81 +269,55 @@ object VisionLocator {
      *   finish(message="xxx")
      */
     private fun parseVisionResponse(content: String, screenW: Int, screenH: Int): LocateResult {
-        // 1. 提取 <think> 部分
+        fun normX(nx: Int) = (nx / 999f * screenW).toInt()
+        fun normY(ny: Int) = (ny / 999f * screenH).toInt()
+
         val thinking = Regex("""<think>(.*?)</think>""", RegexOption.DOT_MATCHES_ALL)
             .find(content)?.groupValues?.getOrNull(1)?.trim() ?: ""
-
-        // 2. 提取 <answer> 中的操作指令, 没有标签则直接用整个 content
         val actionText = Regex("""<answer>(.*?)</answer>""", RegexOption.DOT_MATCHES_ALL)
             .find(content)?.groupValues?.getOrNull(1)?.trim() ?: content
 
-        // 3. 检测 finish
         if (actionText.contains("finish(message=")) {
-            val msg = Regex("""finish\(message="([^"]*)"""")
-                .find(actionText)?.groupValues?.getOrNull(1) ?: "任务结束"
+            val msg = Regex("""finish\(message="([^"]*)"""").find(actionText)?.groupValues?.getOrNull(1) ?: "任务结束"
             return LocateResult(false, errorReason = msg)
         }
 
-        // 4. 解析 do(action="Tap", element=[x,y])
-        val actionMatch = Regex("""do\(action="(\w+(?:\s+\w+)?)"(?:,\s*(\w+)="?([^")]+)"?)?(?:,\s*(\w+)=\[(\d+)\s*,\s*(\d+)\])?""")
-            .find(actionText)
+        val action = Regex("""action="([^"]+)"""").find(actionText)?.groupValues?.getOrNull(1) ?: "Tap"
+        val elem = Regex("""element=\[(\d+)\s*[,，]\s*(\d+)]""").find(actionText)
+        val ex = elem?.groupValues?.get(1)?.toIntOrNull() ?: 500
+        val ey = elem?.groupValues?.get(2)?.toIntOrNull() ?: 500
+        val txt = Regex("""text="([^"]+)"""").find(actionText)?.groupValues?.getOrNull(1) ?: ""
+        val swStart = Regex("""start=\[(\d+)\s*[,，]\s*(\d+)]""").find(actionText)
+        val swEnd = Regex("""end=\[(\d+)\s*[,，]\s*(\d+)]""").find(actionText)
+        val dur = Regex("""duration=(\d+)""").find(actionText)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        val pkg = Regex("""package="([^"]+)"""").find(actionText)?.groupValues?.getOrNull(1) ?: ""
 
-        if (actionMatch == null) {
-            // 尝试更宽松的匹配
-            val tapMatch = Regex("""Tap.*?element\s*=\s*\[(\d+)\s*[,，]\s*(\d+)]""").find(actionText)
-            if (tapMatch != null) {
-                val nx = tapMatch.groupValues[1].toIntOrNull() ?: 0
-                val ny = tapMatch.groupValues[2].toIntOrNull() ?: 0
-                val px = (nx / 1000f * screenW).toInt()
-                val py = (ny / 1000f * screenH).toInt()
-                return LocateResult(true, px, py, "Tap", confidence = 0.7f, thinking = thinking)
+        return when (action) {
+            "Tap", "Double Tap" ->
+                LocateResult(true, normX(ex), normY(ey), action, thinking = thinking)
+            "LongPress" ->
+                LocateResult(true, normX(ex), normY(ey), action, duration = dur, thinking = thinking)
+            "Type", "Type_Name" ->
+                LocateResult(true, normX(ex), normY(ey), action, text = txt, thinking = thinking)
+            "Swipe" -> {
+                val sxe = swStart?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                val sye = swStart?.groupValues?.get(2)?.toIntOrNull() ?: 0
+                val exe = swEnd?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                val eye = swEnd?.groupValues?.get(2)?.toIntOrNull() ?: 0
+                LocateResult(true, normX(ex), normY(ey), action, thinking = thinking,
+                    startX = normX(sxe), startY = normY(sye), endX = normX(exe), endY = normY(eye), duration = dur)
             }
-
-            return LocateResult(false, errorReason = "无法解析 VLM 响应: ${actionText.take(100)}")
-        }
-
-        val actionName = actionMatch.groupValues[1]
-        val param1Name = actionMatch.groupValues[2]  // element / text / app
-        val param1Val = actionMatch.groupValues[3]
-        val param2Name = actionMatch.groupValues[4]  // element (如果是双参数)
-        val nx = actionMatch.groupValues[5].toIntOrNull() ?: 0
-        val ny = actionMatch.groupValues[6].toIntOrNull() ?: 0
-
-        return when {
-            actionName == "Tap" || actionName == "Long Press" || actionName == "Double Tap" -> {
-                val px = (nx / 1000f * screenW).toInt()
-                val py = (ny / 1000f * screenH).toInt()
-                LocateResult(true, px, py, actionName, confidence = 0.8f, thinking = thinking)
-            }
-            actionName == "Type" || actionName == "Type_Name" -> {
-                val text = param1Val
-                LocateResult(true, action = actionName, text = text, confidence = 0.8f, thinking = thinking)
-            }
-            actionName == "Swipe" -> {
-                // Swipe 有 start 和 end 参数, 这里简单处理
-                val swipeMatch = Regex("""start=\[(\d+),(\d+)\].*?end=\[(\d+),(\d+)]""").find(actionText)
-                if (swipeMatch != null) {
-                    val sx = (swipeMatch.groupValues[1].toIntOrNull() ?: 0) / 1000f * screenW
-                    val sy = (swipeMatch.groupValues[2].toIntOrNull() ?: 0) / 1000f * screenH
-                    LocateResult(true, sx.toInt(), sy.toInt(), "Swipe", confidence = 0.8f, thinking = thinking)
-                } else {
-                    LocateResult(false, errorReason = "Swipe 参数不完整")
-                }
-            }
-            actionName == "Launch" -> {
-                LocateResult(true, action = "Launch", text = param1Val, confidence = 0.9f, thinking = thinking)
-            }
-            actionName == "Back" || actionName == "Home" || actionName == "Wait" -> {
-                LocateResult(true, action = actionName, confidence = 0.9f, thinking = thinking)
-            }
-            else -> {
-                LocateResult(false, errorReason = "未知动作: $actionName")
-            }
+            "Launch" ->
+                LocateResult(true, action = "Launch", packageName = pkg.ifBlank { txt }, thinking = thinking)
+            "Wait" ->
+                LocateResult(true, action = "Wait", duration = if (dur > 0) dur else 1500, thinking = thinking)
+            "Back" -> LocateResult(true, action = "Back", thinking = thinking)
+            "Home" -> LocateResult(true, action = "Home", thinking = thinking)
+            else -> LocateResult(false, errorReason = "未知动作: $action")
         }
     }
 
-    /** 快速探测: 视觉模型是否可用 (连通性测试) */
-    suspend fun probe(ctx: Context, settings: UserSettings): String = withContext(Dispatchers.IO) {
+    /** 快速探测: 视觉模型是否可用 (连通性测试) */fun probe(ctx: Context, settings: UserSettings): String = withContext(Dispatchers.IO) {
         if (!settings.visionEnabled) return@withContext "视觉模型未启用"
         if (settings.visionApiKey.isBlank()) return@withContext "未配置 API Key"
 
