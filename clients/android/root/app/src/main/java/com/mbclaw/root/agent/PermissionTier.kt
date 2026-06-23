@@ -125,17 +125,15 @@ class PermissionTier private constructor(private val context: Context) {
         )
         for (path in suPaths) {
             try {
-                // 用 pm list packages 测root (云手机su可能拦截id但放行pm)
-                val p = Runtime.getRuntime().exec(arrayOf(path, "-c", "pm list packages 2>/dev/null | head -1"))
+                // 真root测试: 只有root能读 /data/system/packages.list
+                val p = Runtime.getRuntime().exec(arrayOf(path, "-c", "head -1 /data/system/packages.list 2>/dev/null"))
                 if (p.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
                     val out = BufferedReader(InputStreamReader(p.inputStream)).readText()
-                    if (out.contains("package:")) return true
-                    // 兼容: 有的su返回空但err里有内容
-                    val err = BufferedReader(InputStreamReader(p.errorStream)).readText()
-                    if (err.contains("package:")) return true
+                    // 包含数字空格包名格式 → root确认
+                    if (out.isNotBlank() && out.contains(" ")) return true
                 } else { p.destroy() }
             } catch (_: Exception) {}
-            // 回退: 也试一下id
+            // 回退: id命令
             try {
                 val p = Runtime.getRuntime().exec(arrayOf(path, "-c", "id 2>&1"))
                 if (p.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)) {
