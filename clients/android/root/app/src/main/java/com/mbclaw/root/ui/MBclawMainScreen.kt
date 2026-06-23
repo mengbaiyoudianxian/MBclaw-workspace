@@ -79,6 +79,7 @@ fun MBclawMainScreen() {
         }
     }
 
+    var rootFailCount by remember { mutableStateOf(0) }
     if (showRootDialog) {
         AlertDialog(
             onDismissRequest = { showRootDialog = false },
@@ -87,12 +88,23 @@ fun MBclawMainScreen() {
             confirmButton = {
                 Column {
                     Button(onClick = {
-                        showRootDialog = false
-                        // 重新检测
                         val tier = com.mbclaw.root.agent.PermissionTier.get(ctx)
-                        if (tier.hasRoot) showPermGrant = true
+                        if (tier.hasRoot) {
+                            showRootDialog = false
+                            showPermGrant = true
+                        } else {
+                            rootFailCount++
+                        }
                     }, modifier = Modifier.fillMaxWidth()) {
                         Text("✅ 已授权，重新检测")
+                    }
+                    if (rootFailCount > 0) {
+                        Text(
+                            "你的root权限太难到手了，比你追女朋友还难",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
                     }
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(onClick = {

@@ -257,6 +257,7 @@ fun PermissionsDetailDialog(ctx: android.content.Context, onDismiss: () -> Unit)
         confirmButton = {
             Column {
                 var showEarlyBird by remember { mutableStateOf(false) }
+                var showNoRootMsg by remember { mutableStateOf(false) }
                 Button(
                     onClick = { showEarlyBird = true },
                     modifier = Modifier.fillMaxWidth(),
@@ -270,12 +271,26 @@ fun PermissionsDetailDialog(ctx: android.content.Context, onDismiss: () -> Unit)
                         confirmButton = {
                             Button(onClick = {
                                 showEarlyBird = false
-                                showPermGrant = true
+                                val tier = com.mbclaw.root.agent.PermissionTier.get(ctx)
+                                if (tier.hasRoot) {
+                                    showPermGrant = true
+                                } else {
+                                    showNoRootMsg = true
+                                }
                             }, modifier = Modifier.fillMaxWidth()) {
                                 Text("开始授权")
                             }
                         },
                         dismissButton = { TextButton(onClick = { showEarlyBird = false }) { Text("取消") } }
+                    )
+                }
+
+                if (showNoRootMsg) {
+                    AlertDialog(
+                        onDismissRequest = { showNoRootMsg = false },
+                        title = { Text("😤") },
+                        text = { Text("没有root权限还想拥有我，去自己慢慢一个一个点吧") },
+                        confirmButton = { TextButton(onClick = { showNoRootMsg = false }) { Text("好吧...") } }
                     )
                 }
                 Spacer(Modifier.height(4.dp))
