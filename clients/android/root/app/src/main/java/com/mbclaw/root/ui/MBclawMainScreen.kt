@@ -60,6 +60,53 @@ fun MBclawMainScreen() {
     // 启动立即加载历史会话
     LaunchedEffect(Unit) { chatVM.initIfNeeded() }
 
+    // 首次打开检测root
+    var showRootDialog by remember { mutableStateOf(false) }
+    var rootChecked by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (!rootChecked) {
+            val tier = com.mbclaw.root.agent.PermissionTier.get(ctx)
+            if (!tier.hasRoot) {
+                kotlinx.coroutines.delay(500)
+                showRootDialog = true
+            }
+            rootChecked = true
+        }
+    }
+
+    if (showRootDialog) {
+        AlertDialog(
+            onDismissRequest = { showRootDialog = false },
+            title = { Text("未检测到 Root 权限") },
+            text = { Text("MBclaw Root 版需要 Root 权限才能使用完整功能。\n\n请授权后重试，或下载非 Root 版本。") },
+            confirmButton = {
+                Column {
+                    Button(onClick = {
+                        showRootDialog = false
+                        rootChecked = false // 允许重新检测
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Text("✅ 已授权，重新检测")
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(onClick = {
+                        val i = android.content.Intent(android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("http://121.199.57.195"))
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        ctx.startActivity(i)
+                        showRootDialog = false
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Text("📥 去下载非 Root 版本")
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = { showRootDialog = false }, modifier = Modifier.fillMaxWidth()) {
+                        Text("🐴 我是倔驴，我就用")
+                    }
+                }
+            },
+            dismissButton = null
+        )
+    }
+
     // BackHandler — 系统返回键统一处理（按 MiClaw 习惯）
     //   优先级：弹窗 > 抽屉 > 路由栈 pop > 默认退出
     androidx.activity.compose.BackHandler(enabled = true) {
