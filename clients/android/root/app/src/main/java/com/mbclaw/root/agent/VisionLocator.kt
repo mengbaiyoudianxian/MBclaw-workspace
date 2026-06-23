@@ -93,20 +93,21 @@ object VisionLocator {
         }
 
         val tier = PermissionTier.get(ctx)
-        if (!tier.hasRoot) {
-            return@withContext LocateResult(false, errorReason = "需要 Root 权限截图")
-        }
 
         // 1. 截图
-        val screenshotB64 = captureScreenBase64(tier) ?: run {
+        val screenshotB64 = captureScreenBase64(tier)
+        if (screenshotB64 == null) {
+            if (!tier.hasRoot) {
+                return@withContext LocateResult(false,
+                    errorReason = "非Root设备无法截图。视觉定位需要 Root 权限。\n替代方案: 使用 see_screen + click_by_index (基于无障碍)")
+            }
             return@withContext LocateResult(false, errorReason = "截图失败")
         }
 
-        // 2. 获取屏幕尺寸 (用于后续坐标转换)
-        val wm = tier.shellRoot("wm size 2>/dev/null") ?: ""
-        val sizeMatch = Regex("""(\d+)x(\d+)""").find(wm)
-        val screenW = sizeMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1080
-        val screenH = sizeMatch?.groupValues?.getOrNull(2)?.toIntOrNull() ?: 2400
+        // 2. 获取屏幕尺寸
+        val dm = ctx.resources.displayMetrics
+        val screenW = dm.widthPixels
+        val screenH = dm.heightPixels
 
         // 3. 调用 VLM
         try {

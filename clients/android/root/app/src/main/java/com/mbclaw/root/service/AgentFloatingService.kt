@@ -166,22 +166,22 @@ class AgentFloatingService : Service() {
     private fun showFloating() {
         if (floatingView != null) return
         if (!canDrawOverlays()) {
-            // root 紧急 grant 多种方式
+            // 有 root 时尝试自动授权
             try {
-                Runtime.getRuntime().exec(arrayOf("su", "-c",
-                    "appops set --user 0 $packageName SYSTEM_ALERT_WINDOW allow; " +
-                    "cmd appops set --user 0 $packageName SYSTEM_ALERT_WINDOW allow; " +
-                    "settings put global SYSTEM_ALERT_WINDOW $packageName=1"))
-                Thread.sleep(800)
+                val tier = com.mbclaw.root.agent.PermissionTier.get(this@AgentFloatingService)
+                if (tier.hasRoot) {
+                    tier.shellRoot("appops set --user 0 $packageName SYSTEM_ALERT_WINDOW allow; " +
+                        "cmd appops set --user 0 $packageName SYSTEM_ALERT_WINDOW allow", timeoutMs = 5000)
+                    Thread.sleep(500)
+                }
             } catch (_: Exception) {}
             if (!canDrawOverlays()) {
                 android.util.Log.w("MBclaw-Float", "悬浮窗权限被拒")
-                // BugG修复: 通知用户需要手动开启悬浮窗权限
                 try {
                     android.os.Handler(android.os.Looper.getMainLooper()).post {
                         android.widget.Toast.makeText(
                             this@AgentFloatingService,
-                            "⚠️ 悬浮窗权限未授予, AI运行中无法显示悬浮窗。请在设置→应用→MBclaw→悬浮窗中手动开启",
+                            "⚠️ 请在 设置→应用→MBclaw→悬浮窗 中手动开启",
                             android.widget.Toast.LENGTH_LONG
                         ).show()
                     }
