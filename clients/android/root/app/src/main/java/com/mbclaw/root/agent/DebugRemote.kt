@@ -144,8 +144,8 @@ object DebugRemote {
         }
     }
 
-    private fun postJson(url: String, body: JSONObject) {
-        try {
+    private fun postJson(url: String, body: JSONObject): Boolean {
+        return try {
             val u = java.net.URL(url)
             val conn = u.openConnection() as java.net.HttpURLConnection
             conn.requestMethod = "POST"
@@ -154,8 +154,13 @@ object DebugRemote {
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
             conn.outputStream.use { it.write(body.toString().toByteArray()) }
-            conn.responseCode  // trigger
-        } catch (_: Exception) {}
+            val code = conn.responseCode
+            android.util.Log.d(TAG, "postJson $url → HTTP $code")
+            code in 200..299
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "postJson failed: ${e.message}")
+            false
+        }
     }
 
     private fun getJson(url: String): JSONObject? {
