@@ -221,8 +221,8 @@ class AgentFloatingService : Service() {
             val btnBg = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = dp(6).toFloat()
-                setColor(0xCCFF3B30)   // 80% 不透明红, 更显眼
-                setStroke(dp(1.5f), 0xFFFFFFFF.toInt())
+                setColor(0xCCFF3B30.toInt())   // 80% 不透明红, 更显眼
+                setStroke(dp(2), 0xFFFFFFFF.toInt())
             }
             background = btnBg
             gravity = Gravity.CENTER

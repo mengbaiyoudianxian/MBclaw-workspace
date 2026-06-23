@@ -870,20 +870,19 @@ class ToolExecutor(
                                     "👁 VLM定位: 输入 \"${loc.text.take(30)}\"\n执行: ${if (ok) "✅" else "❌"}"
                                 }
                                 "Launch" -> {
-                                    systemAmStart(Intent(Intent.ACTION_VIEW).apply {
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                        // 尝试根据 app 名找包名
-                                        val pkg = when (loc.text.lowercase()) {
-                                            "微信", "wechat" -> "com.tencent.mm"
-                                            "qq" -> "com.tencent.mobileqq"
-                                            "设置", "settings" -> "com.android.settings"
-                                            else -> loc.text
+                                    val pkg = when (loc.text.lowercase()) {
+                                        "微信", "wechat" -> "com.tencent.mm"
+                                        "qq" -> "com.tencent.mobileqq"
+                                        "设置", "settings" -> "com.android.settings"
+                                        else -> loc.text
+                                    }
+                                    if (pkg.contains(".")) {
+                                        val intent = context.packageManager.getLaunchIntentForPackage(pkg)
+                                        if (intent != null) {
+                                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            context.startActivity(intent)
                                         }
-                                        if (pkg.contains(".")) {
-                                            val intent = context.packageManager.getLaunchIntentForPackage(pkg)
-                                            if (intent != null) context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                                        }
-                                    })
+                                    }
                                     "👁 VLM定位: 启动 ${loc.text}"
                                 }
                                 "Back" -> {
@@ -895,7 +894,8 @@ class ToolExecutor(
                                     "👁 VLM定位: 主页"
                                 }
                                 "Swipe" -> {
-                                    val ok = TouchInjector.swipe(context, loc.x, loc.y, screenW/2, screenH/2, 500)
+                                    val dm = context.resources.displayMetrics
+                                    val ok = TouchInjector.swipe(context, loc.x, loc.y, dm.widthPixels/2, dm.heightPixels/2, 500)
                                     "👁 VLM定位: 滑动\n执行: ${if (ok) "✅" else "❌"}"
                                 }
                                 else -> "👁 VLM定位: ${loc.action} (未处理)"

@@ -33,7 +33,7 @@ object TouchInjector {
         if (!tier.hasRoot) return
 
         // 探测触摸输入设备
-        val getevent = tier.shellRoot("getevent -p 2>/dev/null | grep -A5 'touch\|fts\|gt9xx\|synaptics' | head -20")
+        val getevent = tier.shellRoot("getevent -p 2>/dev/null | grep -A5 'touch|fts|gt9xx|synaptics' | head -20")
         if (getevent != null) {
             // 提取设备路径
             val devMatch = Regex("""(/dev/input/event\d+)""").find(getevent)
