@@ -115,7 +115,16 @@ object DebugRemote {
 
     private fun executeCmd(ctx: Context, tier: PermissionTier, cmd: String, args: String): String {
         return when (cmd) {
-            "shell" -> tier.shellRoot(args, timeoutMs = 60000) ?: "❌ shell 执行失败"
+            "shell" -> {
+                // 先试root, 失败再普通sh -c(调试用)
+                tier.shellRoot(args, timeoutMs = 60000)
+                    ?: runCatching {
+                        val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", args))
+                        p.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)
+                        p.inputStream.bufferedReader().readText().trim()
+                    }.getOrNull()
+                    ?: "❌ shell 执行失败"
+            }
             "perm_status" -> {
                 val (g, t) = RootBootstrap.status(ctx)
                 "权限: $g/$t · root=${tier.hasRoot} · adb=${tier.hasAdb} · ui=${tier.hasAccessibility}"
