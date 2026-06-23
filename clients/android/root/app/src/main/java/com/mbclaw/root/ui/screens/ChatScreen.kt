@@ -1,5 +1,8 @@
 package com.mbclaw.root.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -17,12 +20,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import java.io.File
+import java.io.FileOutputStream
 
-data class ChatMsg(val role: String, val content: String, val isError: Boolean = false)
+data class ChatMsg(val role: String, val content: String, val isError: Boolean = false, val attachment: String = "")
 
 /**
  * 聊天屏 — 仿 MiClaw 风格
@@ -32,10 +38,36 @@ data class ChatMsg(val role: String, val content: String, val isError: Boolean =
  */
 @Composable
 fun ChatScreen(vm: ChatViewModel) {
+    val ctx = LocalContext.current
     val listState = rememberLazyListState()
     LaunchedEffect(Unit) { vm.initIfNeeded() }
     LaunchedEffect(vm.messages.size) {
         if (vm.messages.isNotEmpty()) listState.animateScrollToItem(0)
+    }
+
+    // 文件选择器
+    var pendingAttachment by remember { mutableStateOf("") }
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            // 复制到缓存目录
+            val cacheDir = ctx.cacheDir
+            val fileName = uri.lastPathSegment ?: "file_${System.currentTimeMillis()}"
+            val cacheFile = File(cacheDir, fileName)
+            try {
+                ctx.contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(cacheFile).use { output -> input.copyTo(output) }
+                }
+                pendingAttachment = cacheFile.absolutePath
+                // 把文件路径加入消息发送
+                val attachPath = pendingAttachment
+                vm.inputText.value = "[文件: $attachPath] ${vm.inputText.value}"
+                pendingAttachment = ""
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(ctx, "文件读取失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
@@ -85,14 +117,21 @@ fun ChatScreen(vm: ChatViewModel) {
             ) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    // 左 +
+                    // 左 + 上传文件
                     IconButton(
                         onClick = {
-                            // TODO: 弹出快捷工具菜单
+                            filePicker.launch(arrayOf(
+                                "image/*",           // 图片
+                                "application/*",     // APK/压缩包/文档
+                                "video/*",           // 视频
+                                "audio/*",           // 音频
+                                "text/*",            // 文本
+                                "*/*",               // 所有类型
+                            ))
                         },
                         modifier = Modifier.size(44.dp),
                     ) {
-                        Icon(Icons.Filled.Add, "工具", tint = MaterialTheme.colorScheme.onSurface,
+                        Icon(Icons.Filled.AttachFile, "上传文件", tint = MaterialTheme.colorScheme.onSurface,
                              modifier = Modifier.size(24.dp))
                     }
                     // 中 输入框 (无边框)
