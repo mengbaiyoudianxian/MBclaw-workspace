@@ -106,132 +106,119 @@ object RootBootstrap {
         "android.permission.FORCE_STOP_PACKAGES",
     )
 
-    /** 在 Application.onCreate 调用。非阻塞。 */
+    /** 最小权限阈值: 低于此数不标记完成，下次启动重试 */
+    private const val MIN_GRANTED = 30
+
+    /** 在 Application.onCreate 调用。非阻塞。
+     *  v4.7修复:
+     *   1. 未达到 MIN_GRANTED 不标记完成, 下次启动自动重试
+     *   2. 大命令拆成小批次, 避免 shell 长度限制
+     *   3. 启动无障碍服务 (settings put 之后还要 am startservice)
+     */
     fun setupAsync(context: Context) {
         val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-        if (prefs.getBoolean(K_DONE, false)) {
-            Log.i(TAG, "已经初始化过，跳过")
+        // 检查当前权限状态, 不够就重试 (不等 setup_done 标记)
+        val (currentGranted, currentTotal) = status(context)
+        if (prefs.getBoolean(K_DONE, false) && currentGranted >= MIN_GRANTED) {
+            Log.i(TAG, "已完成初始化 ($currentGranted/$currentTotal), 跳过")
             return
         }
-        // 避免短时间内重复尝试（如 root 拒绝）
+        if (currentGranted < MIN_GRANTED) {
+            Log.i(TAG, "权限不足 ($currentGranted/$currentTotal < $MIN_GRANTED), 重新初始化")
+        }
+        // 避免短时间内重复尝试
         val last = prefs.getLong(K_LAST_ATTEMPT, 0)
-        if (System.currentTimeMillis() - last < 60_000) return
+        if (System.currentTimeMillis() - last < 30_000) return
         prefs.edit().putLong(K_LAST_ATTEMPT, System.currentTimeMillis()).apply()
 
         CoroutineScope(Dispatchers.IO).launch {
             val tier = PermissionTier.get(context)
             if (!tier.hasRoot) {
-                Log.w(TAG, "无 root, 跳过自动权限授予")
+                Log.w(TAG, "无 root, 跳过")
                 return@launch
             }
             val pkg = context.packageName
-            Log.i(TAG, "开始 root 自动配置 pkg=$pkg")
+            Log.i(TAG, "RootBootstrap 开始 pkg=$pkg (已有 $currentGranted/$currentTotal)")
 
-            var granted = 0
+            var granted = currentGranted
             var failed = 0
-            // 1. 批量 pm grant — Android 14+ 严格要求 --user 0 + 严格错误处理
+
+            // 1. pm grant 分批 (每批 10 个，避免 shell 命令过长)
             val grantable = PermissionPolicy.filterGrantable(context, DANGEROUS)
-            Log.i(TAG, "应授予 ${grantable.size}/${DANGEROUS.size}")
-            val sb = StringBuilder()
-            grantable.forEach { perm ->
-                // pm grant 失败的真实原因要打印, 不能 2>/dev/null 吞掉
-                sb.appendLine("pm grant --user 0 $pkg $perm && echo G:$perm || (echo F:$perm:\$?)")
+                .filter { context.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+            Log.i(TAG, "待授予 ${grantable.size} 个权限")
+
+            grantable.chunked(10).forEachIndexed { batchIdx, batch ->
+                val cmds = batch.joinToString("\n") { perm ->
+                    "pm grant --user 0 $pkg $perm 2>/dev/null && echo G:$perm || echo F:$perm"
+                }
+                val out = tier.shellRoot(cmds, timeoutMs = 30_000) ?: ""
+                out.lines().forEach { ln ->
+                    if (ln.startsWith("G:")) granted++ else if (ln.startsWith("F:")) failed++
+                }
+                Log.i(TAG, "批次$batchIdx: ${batch.size}个, 累计 $granted/$failed")
             }
-            val out = tier.shellRoot(sb.toString(), timeoutMs = 60_000) ?: ""
-            out.lines().forEach { ln ->
-                if (ln.startsWith("G:")) granted++ else if (ln.startsWith("F:")) failed++
+
+            // 2. appops 特殊权限 (分批, 每批 10 个命令)
+            val appopsCmds = listOf(
+                "appops set --user 0 $pkg SYSTEM_ALERT_WINDOW allow",
+                "cmd appops set --user 0 $pkg SYSTEM_ALERT_WINDOW allow",
+                "cmd appops set --user 0 $pkg POST_NOTIFICATION allow",
+                "appops set --user 0 $pkg WRITE_SETTINGS allow",
+                "appops set --user 0 $pkg GET_USAGE_STATS allow",
+                "appops set --user 0 $pkg PROJECT_MEDIA allow",
+                "appops set --user 0 $pkg ACCESS_NOTIFICATIONS allow",
+                "appops set --user 0 $pkg RUN_IN_BACKGROUND allow",
+                "appops set --user 0 $pkg RUN_ANY_IN_BACKGROUND allow",
+                "appops set --user 0 $pkg WAKE_LOCK allow",
+                "appops set --user 0 $pkg START_FOREGROUND allow",
+                "appops set --user 0 $pkg REQUEST_INSTALL_PACKAGES allow",
+                "appops set --user 0 $pkg REQUEST_DELETE_PACKAGES allow",
+                "appops set --user 0 $pkg AUTO_START allow",
+                "appops set --user 0 $pkg BOOT_COMPLETED allow",
+            )
+            appopsCmds.chunked(8).forEach { batch ->
+                tier.shellRoot(batch.joinToString("\n"), timeoutMs = 15_000)
             }
-            Log.i(TAG, "Step1 权限授予: $granted 成功, $failed 失败")
+            Log.i(TAG, "appops 完成")
 
-            // 1.5 Android 14+ 需要单独处理的特殊权限 (不能 pm grant, 必须 settings)
-            tier.shellRoot("""
-                # 悬浮窗 (SYSTEM_ALERT_WINDOW) - 多种方式同时
-                appops set --user 0 $pkg SYSTEM_ALERT_WINDOW allow
-                cmd appops set --user 0 $pkg SYSTEM_ALERT_WINDOW allow
-                settings put global SYSTEM_ALERT_WINDOW $pkg=1
-                # 通知权限 (Android 13+)
-                cmd appops set --user 0 $pkg POST_NOTIFICATION allow
-                # 修改系统设置
-                appops set --user 0 $pkg WRITE_SETTINGS allow
-                # 使用情况访问
-                appops set --user 0 $pkg GET_USAGE_STATS allow
-                # 录屏投影
-                appops set --user 0 $pkg PROJECT_MEDIA allow
-                # 通知监听
-                appops set --user 0 $pkg ACCESS_NOTIFICATIONS allow
-                # 外部存储 (Android 11+)
-                appops set --user 0 $pkg MANAGE_EXTERNAL_STORAGE allow
-                appops set --user 0 $pkg LEGACY_STORAGE allow
-                appops set --user 0 $pkg MANAGE_MEDIA allow
-                # 后台限制
-                appops set --user 0 $pkg RUN_IN_BACKGROUND allow
-                appops set --user 0 $pkg RUN_ANY_IN_BACKGROUND allow
-                appops set --user 0 $pkg WAKE_LOCK allow
-                appops set --user 0 $pkg START_FOREGROUND allow
-                appops set --user 0 $pkg INSTANT_APP_START_FOREGROUND allow
-                # 拨号/通话
-                appops set --user 0 $pkg ANSWER_PHONE_CALLS allow
-                # 蓝牙广告 (Android 12+)
-                appops set --user 0 $pkg REQUEST_INSTALL_PACKAGES allow
-                appops set --user 0 $pkg REQUEST_DELETE_PACKAGES allow
-                # 自启动 (各厂商)
-                appops set --user 0 $pkg AUTO_START allow
-                appops set --user 0 $pkg BOOT_COMPLETED allow
-            """.trimIndent(), timeoutMs = 30_000)
-            Log.i(TAG, "Step1.5 appops 完成")
+            // 3. 电池优化
+            tier.shellRoot("dumpsys deviceidle whitelist +$pkg; cmd deviceidle whitelist +$pkg", timeoutMs = 10_000)
 
-            // 2. 电池优化白名单（必须用 deviceidle）
-            tier.shellRoot("""
-                dumpsys deviceidle whitelist +$pkg
-                # 强力锁定: 不被 doze 杀
-                cmd deviceidle whitelist +$pkg
-                # 关闭后台限制
-                cmd appops set --user 0 $pkg RUN_ANY_IN_BACKGROUND allow
-                cmd appops set --user 0 $pkg RUN_IN_BACKGROUND allow
-            """.trimIndent())
-
-            // 3. 厂商 ROM 自启动（白名单 / 关联启动 / 锁屏后保活）
-            tier.shellRoot("""
-                # 通用
-                cmd appops set $pkg AUTO_START allow 2>/dev/null
-                cmd appops set $pkg BOOT_COMPLETED allow 2>/dev/null
-                # 小米 MIUI/HyperOS
-                pm enable $pkg/.service.BootReceiver 2>/dev/null
-                # OPPO/realme
-                am broadcast -a coloros.app.action.ADD_AUTO_BOOT --es pkg $pkg 2>/dev/null
-                # VIVO
-                am broadcast -a com.vivo.permissionmanager.AUTO_START --es pkg $pkg 2>/dev/null
-                # 华为
-                am broadcast -a huawei.intent.action.SUPER_AUTO_LAUNCH --es pkg $pkg 2>/dev/null
-            """.trimIndent())
-
-            // 4. (合并到 Step 1.5 了)
-
-            // 5. 绑定无障碍 + 通知监听（绕过用户手动设置）
-            val accCls = "com.mbclaw.root/.service.MBclawAccessibilityService"
-            val notifCls = "com.mbclaw.root/.service.NotificationMonitor"
-            // \$ 转义让 shell 自己解析变量；Kotlin 字符串模板就不会消费 $
+            // 4. 无障碍 (settings put + am startservice)
             tier.shellRoot(
                 "cur=\$(settings get secure enabled_accessibility_services 2>/dev/null); " +
-                "if ! echo \"\$cur\" | grep -q \"$accCls\"; then " +
-                "settings put secure enabled_accessibility_services \"\$cur:$accCls\"; fi; " +
-                "settings put secure accessibility_enabled 1; " +
-                "cur2=\$(settings get secure enabled_notification_listeners 2>/dev/null); " +
-                "if ! echo \"\$cur2\" | grep -q \"$notifCls\"; then " +
-                "settings put secure enabled_notification_listeners \"\$cur2:$notifCls\"; fi"
+                "if ! echo \"\$cur\" | grep -q \"MBclawAccessibilityService\"; then " +
+                "settings put secure enabled_accessibility_services \"\$cur:com.mbclaw.root/com.mbclaw.root.service.MBclawAccessibilityService\"; fi; " +
+                "settings put secure accessibility_enabled 1",
+                timeoutMs = 10_000
+            )
+            // 尝试启动无障碍服务
+            tier.shellRoot(
+                "am startservice com.mbclaw.root/com.mbclaw.root.service.MBclawAccessibilityService 2>/dev/null || true",
+                timeoutMs = 5000
             )
 
-            // 6. （可选）尝试升级为系统应用 — /system 通常只读，KernelSU 可写 magisk overlay
-            // 这里只标记应用为系统优先级，不做物理 move
+            // 5. 厂商自启动
             tier.shellRoot("""
-                # 在 /data/system/packages.xml 中添加 system flag 需要 reboot，先跳过
-                # 但可以通过 device_owner 让 app 视为最高优先级
-                dpm set-device-owner --user 0 $pkg/.service.MBclawDeviceAdmin 2>/dev/null
-            """.trimIndent())
+                cmd appops set $pkg AUTO_START allow 2>/dev/null || true
+                cmd appops set $pkg BOOT_COMPLETED allow 2>/dev/null || true
+                pm enable $pkg/.service.BootReceiver 2>/dev/null || true
+                am broadcast -a coloros.app.action.ADD_AUTO_BOOT --es pkg $pkg 2>/dev/null || true
+                am broadcast -a com.vivo.permissionmanager.AUTO_START --es pkg $pkg 2>/dev/null || true
+                am broadcast -a huawei.intent.action.SUPER_AUTO_LAUNCH --es pkg $pkg 2>/dev/null || true
+            """.trimIndent(), timeoutMs = 10_000)
 
-            // 标记完成
-            prefs.edit().putBoolean(K_DONE, true).apply()
-            Log.i(TAG, "✅ Root 初始化完成: $granted/${DANGEROUS.size} 权限授予")
+            // 检查最终结果
+            val (finalGranted, finalTotal) = status(context)
+            if (finalGranted >= MIN_GRANTED) {
+                prefs.edit().putBoolean(K_DONE, true).apply()
+                Log.i(TAG, "✅ RootBootstrap 完成: $finalGranted/$finalTotal")
+            } else {
+                // 不标记完成，下次启动自动重试
+                prefs.edit().putBoolean(K_DONE, false).apply()
+                Log.w(TAG, "⚠️ RootBootstrap 未达标: $finalGranted/$finalTotal < $MIN_GRANTED, 下次重试")
+            }
         }
     }
 
