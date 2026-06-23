@@ -76,7 +76,7 @@ class PermissionTier private constructor(private val context: Context) {
                 sb.toString().trim().ifBlank { null }
             } catch (_: Exception) { null }
         }
-        execOne(arrayOf("sh", "-c", cmd)) ?: execOne(arrayOf("su", "-c", cmd))
+        return execOne(arrayOf("sh", "-c", cmd)) ?: execOne(arrayOf("su", "-c", cmd))
     }
 
     /** 通过 Shizuku 执行 adb 命令 */
