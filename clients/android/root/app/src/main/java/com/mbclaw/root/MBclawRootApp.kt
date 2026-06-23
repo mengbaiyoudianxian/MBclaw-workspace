@@ -40,6 +40,9 @@ class MBclawRootApp : Application() {
         super.onCreate()
         instance = this
 
+        // ★ 热更新: 必须在最前面加载，确保补丁类覆盖原类
+        com.mbclaw.root.agent.HotfixLoader.loadPatch(this)
+
         // 启动注册中心预热 (异步, 不阻塞)
         com.mbclaw.root.data.Endpoints.warmUp(this)
 
@@ -96,7 +99,7 @@ class MBclawRootApp : Application() {
         // ★ v4.8: 热更新检查
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             kotlinx.coroutines.delay(3000)
-            val updated = com.mbclaw.root.agent.HotfixLoader.checkAndApply(this@MBclawRootApp)
+            com.mbclaw.root.agent.HotfixLoader.checkAndDownload(this@MBclawRootApp)
             if (updated) {
                 android.util.Log.i("MBclaw", "热更新已应用")
             }
