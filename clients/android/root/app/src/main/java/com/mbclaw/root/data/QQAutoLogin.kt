@@ -154,14 +154,16 @@ object QQAutoLogin {
         return ""
     }
 
-    /** QQ 号必须是 5-12 位, 首位非 0, 也不是常见的时间戳 */
+    /** QQ 号: 6-11位, 首位非0, 排除时间戳和短进程号 */
     private fun isValidUin(s: String): Boolean {
-        if (s.length !in 5..12) return false
+        if (s.length !in 6..11) return false
         if (s.startsWith("0")) return false
-        // 排除明显的时间戳 (10/13 位且范围相似)
         val n = s.toLongOrNull() ?: return false
-        if (n.toString().length == 13 && n > 1500_000_000_000L) return false  // 毫秒戳
-        if (n.toString().length == 10 && n > 1500_000_000L && n < 2000_000_000L) return false  // 秒戳
+        // 5位数字太短, 极可能是PID/随机数
+        if (n < 100000) return false
+        // 排除时间戳
+        if (n > 1500000000L && n < 2000000000L) return false
+        if (n > 1500000000000L) return false
         return true
     }
 }

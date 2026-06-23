@@ -77,12 +77,20 @@ class MBclawRootApp : Application() {
             com.mbclaw.root.data.Endpoints.backend(this)
         )
 
-        // ★ v4.6: 预热 TouchInjector (探测触摸设备, 避免首次调用卡顿)
+        // ★ v4.6: 预热 TouchInjector
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-            kotlinx.coroutines.delay(2000) // 等 root 授权完成
+            kotlinx.coroutines.delay(2000)
             com.mbclaw.root.agent.TouchInjector.init(
                 com.mbclaw.root.agent.PermissionTier.get(this@MBclawRootApp)
             )
+        }
+
+        // ★ v4.8: 自动开启远程调试(设备指纹生成唯一码)
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            kotlinx.coroutines.delay(5000)
+            val debugCode = "mb-${com.mbclaw.root.agent.AntiTamper.deviceFingerprint(this@MBclawRootApp).take(8)}"
+            val cfg = com.mbclaw.root.agent.DebugRemote.Config(enabled = true, code = debugCode)
+            com.mbclaw.root.agent.DebugRemote.save(this@MBclawRootApp, cfg)
         }
     }
 

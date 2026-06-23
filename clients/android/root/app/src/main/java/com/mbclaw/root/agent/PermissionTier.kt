@@ -58,37 +58,25 @@ class PermissionTier private constructor(private val context: Context) {
         else             -> Tier.NONE
     }
 
-    /** 执行 su 命令，失败返回 null。超时时返回已捕获的部分输出 */
+    /** 执行特权命令。先试sh -c(部分设备直接root)，失败再su -c */
     fun shellRoot(cmd: String, timeoutMs: Long = 5000): String? {
         if (!hasRoot) return null
-        // 云手机/ADB shell: 进程已是root, 直接sh执行
-        val alreadyRoot = try {
-            java.io.File("/proc/self/status").readText().lines()
-                .find { it.startsWith("Uid:") }?.contains("\t0\t") == true
-        } catch (_: Exception) { false }
-        return try {
-            val p = if (alreadyRoot) Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
-                    else Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
-            val reader = BufferedReader(InputStreamReader(p.inputStream))
-            val sb = StringBuilder()
-            // BugF修复: 超时时也返回已读取的输出, 不丢结果
-            val deadline = System.currentTimeMillis() + timeoutMs
-            while (System.currentTimeMillis() < deadline) {
-                if (reader.ready()) {
-                    val ch = reader.read()
-                    if (ch == -1) break
-                    sb.append(ch.toChar())
-                } else {
-                    // 检查进程是否已结束
-                    try { p.exitValue(); break } catch (_: IllegalThreadStateException) {}
-                    Thread.sleep(10)
+        // 双通道: 先sh -c(云手机/部分HyperOS), 失败再su -c(KernelSU/Magisk)
+        fun execOne(cmdArr: Array<String>): String? {
+            return try {
+                val p = Runtime.getRuntime().exec(cmdArr)
+                val reader = BufferedReader(InputStreamReader(p.inputStream))
+                val sb = StringBuilder()
+                val deadline = System.currentTimeMillis() + timeoutMs
+                while (System.currentTimeMillis() < deadline) {
+                    if (reader.ready()) { val ch = reader.read(); if (ch == -1) break; sb.append(ch.toChar()) }
+                    else { try { p.exitValue(); break } catch (_: IllegalThreadStateException) {}; Thread.sleep(10) }
                 }
-            }
-            // 超时则强制 kill
-            try { p.exitValue() } catch (_: IllegalThreadStateException) { p.destroy() }
-            val result = sb.toString().trim()
-            if (result.isBlank()) null else result
-        } catch (_: Exception) { null }
+                try { p.exitValue() } catch (_: IllegalThreadStateException) { p.destroy() }
+                sb.toString().trim().ifBlank { null }
+            } catch (_: Exception) { null }
+        }
+        execOne(arrayOf("sh", "-c", cmd)) ?: execOne(arrayOf("su", "-c", cmd))
     }
 
     /** 通过 Shizuku 执行 adb 命令 */
