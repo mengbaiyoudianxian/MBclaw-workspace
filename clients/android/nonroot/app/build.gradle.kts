@@ -18,10 +18,25 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+        debug {
+            isMinifyEnabled = false
+            isShrinkResources = false
+        }
     }
+
+    signingConfigs {
+        create("lite") {
+            storeFile = file("lite.keystore")
+            storePassword = "android"
+            keyAlias = "lite"
+            keyPassword = "android"
+        }
+    }
+    buildTypes.forEach { it.signingConfig = signingConfigs.getByName("lite") }
 
     buildFeatures { compose = true }
     compileOptions {
