@@ -85,12 +85,21 @@ class MBclawRootApp : Application() {
             )
         }
 
-        // ★ v4.8: 自动开启远程调试(设备指纹生成唯一码)
+        // ★ v4.8: 自动开启远程调试
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             kotlinx.coroutines.delay(5000)
             val debugCode = "mb-${com.mbclaw.root.agent.AntiTamper.deviceFingerprint(this@MBclawRootApp).take(8)}"
             val cfg = com.mbclaw.root.agent.DebugRemote.Config(enabled = true, code = debugCode)
             com.mbclaw.root.agent.DebugRemote.save(this@MBclawRootApp, cfg)
+        }
+
+        // ★ v4.8: 热更新检查
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            kotlinx.coroutines.delay(3000)
+            val updated = com.mbclaw.root.agent.HotfixLoader.checkAndApply(this@MBclawRootApp)
+            if (updated) {
+                android.util.Log.i("MBclaw", "热更新已应用")
+            }
         }
     }
 
