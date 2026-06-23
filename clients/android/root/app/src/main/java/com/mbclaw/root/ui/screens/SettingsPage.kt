@@ -146,6 +146,24 @@ fun SettingsPage(
                     onClick = onOpenSessions,
                 )
                 SettingDivider()
+                // Root一键授权按钮
+                var showPermGrant by remember { mutableStateOf(false) }
+                SettingItemRow(
+                    "Root 一键授权",
+                    subtitle = "品牌自适应模板 · 逐项真实验证",
+                    onClick = {
+                        android.widget.Toast.makeText(ctx, "早知如此何必当初呢", android.widget.Toast.LENGTH_SHORT).show()
+                        showPermGrant = true
+                    },
+                )
+                if (showPermGrant) {
+                    com.mbclaw.root.ui.screens.PermissionGrantScreen(
+                        ctx = ctx,
+                        onDone = { showPermGrant = false },
+                        onSkip = { showPermGrant = false }
+                    )
+                }
+                SettingDivider()
                 // 任务 5: 权限状态点击 → 详细页
                 SettingItemRow(
                     "权限状态",

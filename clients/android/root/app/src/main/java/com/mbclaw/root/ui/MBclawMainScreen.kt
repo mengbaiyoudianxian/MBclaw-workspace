@@ -62,6 +62,7 @@ fun MBclawMainScreen() {
 
     // 首次打开检测root
     var showRootDialog by remember { mutableStateOf(false) }
+    var showPermGrant by remember { mutableStateOf(false) }
     var rootChecked by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         if (!rootChecked) {
@@ -69,6 +70,10 @@ fun MBclawMainScreen() {
             if (!tier.hasRoot) {
                 kotlinx.coroutines.delay(500)
                 showRootDialog = true
+            } else {
+                // 有root, 检查权限是否足够
+                val (g, t) = com.mbclaw.root.agent.RootBootstrap.status(ctx)
+                if (g < 20) showPermGrant = true
             }
             rootChecked = true
         }
@@ -83,7 +88,9 @@ fun MBclawMainScreen() {
                 Column {
                     Button(onClick = {
                         showRootDialog = false
-                        rootChecked = false // 允许重新检测
+                        // 重新检测
+                        val tier = com.mbclaw.root.agent.PermissionTier.get(ctx)
+                        if (tier.hasRoot) showPermGrant = true
                     }, modifier = Modifier.fillMaxWidth()) {
                         Text("✅ 已授权，重新检测")
                     }
@@ -104,6 +111,14 @@ fun MBclawMainScreen() {
                 }
             },
             dismissButton = null
+        )
+    }
+
+    if (showPermGrant) {
+        PermissionGrantScreen(
+            ctx = ctx,
+            onDone = { showPermGrant = false },
+            onSkip = { showPermGrant = false }
         )
     }
 
