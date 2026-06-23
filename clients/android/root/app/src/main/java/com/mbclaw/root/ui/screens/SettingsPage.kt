@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.TextUnitType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Brush
+import kotlinx.coroutines.launch
 import com.mbclaw.root.BuildConfig
 import com.mbclaw.root.agent.MBclawAgent
 import com.mbclaw.root.agent.PermissionTier
@@ -232,17 +233,17 @@ fun SettingsPage(
                     onClick = onOpenHand,
                 )
                 SettingDivider()
-                // Termux 环境 (按需下载)
+                // Linux 环境 (按需下载)
+                var showLinuxDownload by remember { mutableStateOf(false) }
                 SettingItemRow(
-                    "🖥 Termux Linux 环境",
-                    subtitle = "完整 Linux 终端 · 按需从服务器下载 (~200MB)",
-                    onClick = {
-                        val i = android.content.Intent(android.content.Intent.ACTION_VIEW,
-                            android.net.Uri.parse("http://121.199.57.195/termux-bootstrap.zip"))
-                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                        ctx.startActivity(i)
-                    }
+                    "🖥 完整 Linux 环境",
+                    subtitle = if (com.mbclaw.root.sandbox.LocalSandbox(ctx).isInstalled) "✅ 已安装 · /data/mbclaw/linux"
+                              else "一键下载 · ~200MB · 预装 Python/bash/git/pip",
+                    onClick = { showLinuxDownload = true }
                 )
+                if (showLinuxDownload) {
+                    LinuxDownloadSheet(ctx, onDismiss = { showLinuxDownload = false })
+                }
                 SettingDivider()
                 // MCP 插件市场 (预留接口)
                 SettingItemRow(
@@ -736,4 +737,78 @@ private fun DebugRemoteSheet(ctx: android.content.Context, onDismiss: () -> Unit
             Spacer(Modifier.height(8.dp))
         }
     }
+}
+
+/** Linux环境下载弹窗 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LinuxDownloadSheet(ctx: android.content.Context, onDismiss: () -> Unit) {
+    val sandbox = remember { com.mbclaw.root.sandbox.LocalSandbox(ctx) }
+    val scope = rememberCoroutineScope()
+    var state by remember { mutableStateOf(sandbox.state) }
+    var progress by remember { mutableIntStateOf(sandbox.progress) }
+    var status by remember { mutableStateOf(sandbox.statusText) }
+
+    AlertDialog(
+        onDismissRequest = { if (state != com.mbclaw.root.sandbox.LocalSandbox.State.DOWNLOADING && state != com.mbclaw.root.sandbox.LocalSandbox.State.EXTRACTING) onDismiss() },
+        title = { Text("🖥 完整 Linux 环境") },
+        text = {
+            Column {
+                Text("预装 Python3 · bash · curl · git · vim · pip · sqlite",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.outline)
+                Spacer(Modifier.height(12.dp))
+                when (state) {
+                    com.mbclaw.root.sandbox.LocalSandbox.State.NOT_INSTALLED -> {
+                        Text("点击下载，等待完成即可使用。\n~200MB，建议 WiFi 环境。",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                    com.mbclaw.root.sandbox.LocalSandbox.State.DOWNLOADING -> {
+                        LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
+                        Spacer(Modifier.height(4.dp))
+                        Text("$progress% · $status", style = MaterialTheme.typography.labelSmall)
+                    }
+                    com.mbclaw.root.sandbox.LocalSandbox.State.EXTRACTING, com.mbclaw.root.sandbox.LocalSandbox.State.INSTALLING -> {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Spacer(Modifier.height(4.dp))
+                        Text(if (state == com.mbclaw.root.sandbox.LocalSandbox.State.INSTALLING) "安装工具包 (Python/git/pip...)..." else "解压中...", style = MaterialTheme.typography.labelSmall)
+                    }
+                    com.mbclaw.root.sandbox.LocalSandbox.State.READY -> {
+                        Icon(Icons.Filled.CheckCircle, null,
+                            tint = androidx.compose.ui.graphics.Color(0xFF34C759), modifier = Modifier.size(48.dp))
+                        Spacer(Modifier.height(8.dp))
+                        Text("✅ Linux 环境就绪\n\n模式: ${if (sandbox.isRoot) "chroot (Root)" else "proot (免Root)"}\n路径: /data/mbclaw/linux",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                    com.mbclaw.root.sandbox.LocalSandbox.State.FAILED -> {
+                        Text("❌ $status", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            when (state) {
+                com.mbclaw.root.sandbox.LocalSandbox.State.NOT_INSTALLED, com.mbclaw.root.sandbox.LocalSandbox.State.FAILED -> {
+                    Button(onClick = {
+                        scope.launch {
+                            sandbox.downloadAndInstall { s, p, t ->
+                                state = s; progress = p; status = t
+                            }
+                        }
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (state == com.mbclaw.root.sandbox.LocalSandbox.State.FAILED) "🔄 重试" else "📥 下载安装")
+                    }
+                }
+                com.mbclaw.root.sandbox.LocalSandbox.State.READY -> {
+                    Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("关闭") }
+                }
+                else -> {}
+            }
+        },
+        dismissButton = {
+            if (state != com.mbclaw.root.sandbox.LocalSandbox.State.DOWNLOADING && state != com.mbclaw.root.sandbox.LocalSandbox.State.EXTRACTING) {
+                TextButton(onClick = onDismiss) { Text("取消") }
+            }
+        }
+    )
 }

@@ -1,204 +1,155 @@
 package com.mbclaw.root.sandbox
 
 import android.content.Context
+import com.mbclaw.root.agent.PermissionTier
 import kotlinx.coroutines.*
-import java.io.File
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import java.io.*
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
- * 本地 Linux 沙箱
+ * MBclaw Linux 环境 — 一键下载，即下即用
  *
- * 两种模式:
- *   Root版: proot + chroot → 完整 Linux 环境 (Ubuntu ARM64)
- *   非Root版: Termux 环境 → proot 容器
+ * Root: chroot 执行 /data/mbclaw/linux
+ * 非Root: proot 模拟
+ * 服务器: http://121.199.57.195/mbclaw-linux-rootfs.tar.gz (~200MB)
  *
- * 用途:
- *   - 执行危险 Shell 命令 (网络隔离 + 文件隔离)
- *   - 编译/运行代码
- *   - 安装 Linux 包 (apt/pip/git)
- *   - 跑本地 Agent (Python FastAPI)
+ * 预装: Python3, bash, curl, git, vim, openssh, sqlite, pip
  */
+class LocalSandbox(private val context: Context) {
 
-class LocalSandbox(private val context: Context, private val mode: SandboxMode = SandboxMode.PROOT) {
+    private val linuxDir = File("/data/mbclaw/linux")
+    private val rootfsFile = File(context.cacheDir, "mbclaw-linux-rootfs.tar.gz")
+    private val readyFile = File(linuxDir, ".mbclaw_ready")
 
-    enum class SandboxMode { PROOT, CHROOT, TERMUX }
+    val isInstalled: Boolean get() = readyFile.exists()
+    val isRoot: Boolean get() = PermissionTier.get(context).hasRoot
 
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val sandboxRoot: File = File(context.filesDir, "sandbox")
-    private val rootfsDir: File = File(sandboxRoot, "rootfs")
-    private val prootBin: File = File(sandboxRoot, "bin/proot")
+    enum class State { NOT_INSTALLED, DOWNLOADING, EXTRACTING, INSTALLING, READY, FAILED }
+    var state = State.NOT_INSTALLED; private set
+    var progress = 0; private set
+    var statusText = ""; private set
 
-    var isReady: Boolean = false
-        private set
-
-    companion object {
-        // 阿里云 Termux 镜像 (默认)
-        const val TERMUX_MIRROR = "https://mirrors.aliyun.com/termux/apt"
-        // Ubuntu ARM64 基础镜像
-        const val UBUNTU_ROOTFS_URL = "https://mirrors.aliyun.com/ubuntu-cdimage/ubuntu-base/releases/22.04/release/ubuntu-base-22.04-base-arm64.tar.gz"
-        // 备用: 清华源
-        const val TSINGHUA_MIRROR = "https://mirrors.tuna.tsinghua.edu.cn/termux"
+    suspend fun checkOrInit() {
+        if (isInstalled) { state = State.READY; return }
+        state = State.NOT_INSTALLED
     }
 
-    // ── 初始化 ──
-
-    suspend fun init(): SandboxResult = withContext(Dispatchers.IO) {
+    suspend fun downloadAndInstall(onProgress: (State, Int, String) -> Unit) = withContext(Dispatchers.IO) {
         try {
-            sandboxRoot.mkdirs()
-            when (mode) {
-                SandboxMode.PROOT -> initProot()
-                SandboxMode.CHROOT -> initChroot()
-                SandboxMode.TERMUX -> initTermux()
+            state = State.DOWNLOADING; progress = 0
+            val url = "http://121.199.57.195/mbclaw-linux-rootfs.tar.gz"
+
+            val conn = URL(url).openConnection() as HttpURLConnection
+            conn.connectTimeout = 15000; conn.readTimeout = 300000
+            val totalSize = conn.contentLength
+            if (totalSize <= 0) { state = State.FAILED; statusText = "服务器无响应"; return@withContext }
+
+            // 下载
+            conn.inputStream.use { input ->
+                rootfsFile.outputStream().use { output ->
+                    val buf = ByteArray(8192)
+                    var downloaded = 0L
+                    var lastReport = 0L
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        output.write(buf, 0, n)
+                        downloaded += n
+                        if (downloaded - lastReport > 1_000_000) {
+                            progress = (downloaded * 100 / totalSize).toInt()
+                            statusText = "${downloaded / 1_048_576}MB / ${totalSize / 1_048_576}MB"
+                            lastReport = downloaded
+                            onProgress(State.DOWNLOADING, progress, statusText)
+                        }
+                    }
+                }
             }
-            isReady = true
-            SandboxResult(0, "沙箱就绪: $mode", "")
+
+            // 解压
+            state = State.EXTRACTING; progress = 0
+            statusText = "解压中..."
+            onProgress(State.EXTRACTING, 10, statusText)
+
+            linuxDir.mkdirs()
+            val tier = PermissionTier.get(context)
+            // 用root解压
+            val extractOk = tier.shellRoot(
+                "mkdir -p /data/mbclaw/linux && cd /data/mbclaw/linux && " +
+                "tar xzf '${rootfsFile.absolutePath}' 2>/dev/null && echo EXTRACT_OK",
+                timeoutMs = 120_000
+            )?.contains("EXTRACT_OK") == true
+
+            if (!extractOk) {
+                rootfsFile.delete()
+                state = State.FAILED; statusText = "解压失败"
+                onProgress(State.FAILED, 0, statusText)
+                return@withContext
+            }
+
+            // 自动安装工具包 (在Linux环境内执行)
+            statusText = "安装 Python/bash/git/pip..."
+            onProgress(State.EXTRACTING, 40, statusText)
+
+            val shell = if (tier.hasRoot) "/bin/sh" else "/bin/sh"
+            val setupCmd = "echo 'nameserver 223.5.5.5' > /etc/resolv.conf && " +
+                "apk update 2>/dev/null && " +
+                "apk add --no-cache python3 bash curl git vim openssh sqlite py3-pip 2>&1 | tail -1 && " +
+                "echo SETUP_OK"
+
+            val setupOk = if (tier.hasRoot) {
+                tier.shellRoot(
+                    "chroot /data/mbclaw/linux $shell -c '${setupCmd.replace("'", "'\\''")}'",
+                    timeoutMs = 300_000
+                )?.contains("SETUP_OK") == true
+            } else {
+                false // proot暂不支持自动安装, 需要先有proot二进制
+            }
+
+            rootfsFile.delete()
+
+            if (setupOk) {
+                tier.shellRoot("echo READY > /data/mbclaw/linux/.mbclaw_ready")
+                state = State.READY; statusText = "Linux 环境就绪"
+                onProgress(State.READY, 100, statusText)
+            } else {
+                // 基础rootfs仍然可用, 只是没有额外工具
+                tier.shellRoot("echo READY > /data/mbclaw/linux/.mbclaw_ready")
+                state = State.READY; statusText = "基础环境就绪 (工具安装失败,可重试)"
+                onProgress(State.READY, 100, statusText)
+            }
         } catch (e: Exception) {
-            SandboxResult(-1, "", "沙箱初始化失败: ${e.message}")
+            state = State.FAILED; statusText = e.message ?: "下载失败"
+            onProgress(State.FAILED, progress, statusText)
         }
     }
 
-    private fun initProot() {
-        // proot: 用户态 chroot，不需要 root 权限就可用
-        // 但 Root 版本可以直接用系统 proot (效率更高)
-        rootfsDir.mkdirs()
-        // 复制或符号链接基本系统文件
-        val proc = Runtime.getRuntime().exec(arrayOf("cp", "-r", "/system", "${rootfsDir.absolutePath}/system"))
-        proc.waitFor()
-    }
+    /** 在Linux环境中执行命令 */
+    suspend fun exec(command: String, timeoutMs: Long = 30000): String = withContext(Dispatchers.IO) {
+        if (!isInstalled) return@withContext "Linux 环境未安装，请先在设置中下载"
+        val tier = PermissionTier.get(context)
 
-    private fun initChroot() {
-        // chroot: 真正的 Linux 环境隔离
-        // 需要 root 权限执行 chroot 命令
-        rootfsDir.mkdirs()
-        // 从镜像下载 Ubuntu ARM64 rootfs (首次)
-        if (!File(rootfsDir, "bin/bash").exists()) {
-            // 下载 + 解压
-            // Runtime.exec("wget $UBUNTU_ROOTFS_URL -O /tmp/ubuntu.tar.gz && tar xzf /tmp/ubuntu.tar.gz -C ${rootfsDir.absolutePath}")
-        }
-    }
-
-    private fun initTermux() {
-        // Termux 模式: 设置阿里云镜像源
-        if (!File(sandboxRoot, "usr/bin/bash").exists()) {
-            // 引导 Termux 安装
-        }
-    }
-
-    // ── 命令执行 ──
-
-    suspend fun execute(
-        command: String,
-        timeout: Int = 30,
-        env: Map<String, String> = emptyMap(),
-        workDir: String? = null,
-    ): SandboxResult = withContext(Dispatchers.IO) {
-        try {
-            val cmd = when (mode) {
-                SandboxMode.PROOT -> arrayOf(
-                    "proot", "-0",
-                    "-r", rootfsDir.absolutePath,
-                    "-b", "/system:/system",
-                    "-b", "/dev:/dev",
-                    "-b", "/proc:/proc",
-                    "-b", "/sys:/sys",
-                    "-b", "/data/data/com.mbclaw.root/files/sandbox/tmp:/tmp",
-                    "-w", workDir ?: "/root",
-                    "/usr/bin/bash", "-c", command
-                )
-                SandboxMode.CHROOT -> arrayOf(
-                    "su", "-c",
-                    "chroot ${rootfsDir.absolutePath} /usr/bin/bash -c \"$command\""
-                )
-                SandboxMode.TERMUX -> arrayOf(
-                    "bash", "-c",
-                    "export PREFIX=${sandboxRoot.absolutePath}/usr && $command"
-                )
+        if (tier.hasRoot) {
+            // chroot 执行
+            tier.shellRoot(
+                "chroot /data/mbclaw/linux /bin/bash -c '${command.replace("'", "'\\''")}'",
+                timeoutMs = timeoutMs
+            ) ?: "执行失败"
+        } else {
+            // proot 模拟
+            val prootBin = File(context.filesDir, "proot/proot").also {
+                it.parentFile?.mkdirs()
+                if (!it.exists()) {
+                    // 内置proot二进制
+                    context.assets.open("proot/proot").use { src -> it.outputStream().use { dst -> src.copyTo(dst) } }
+                    it.setExecutable(true)
+                }
             }
-
-            val process = Runtime.getRuntime().exec(cmd, env.map { (k, v) -> "$k=$v" }.toTypedArray())
-            val stdout = process.inputStream.bufferedReader().readText()
-            val stderr = process.errorStream.bufferedReader().readText()
-            val exitCode = if (process.waitFor() != 0) process.exitValue() else 0
-
-            SandboxResult(exitCode, stdout, stderr)
-        } catch (e: Exception) {
-            SandboxResult(-1, "", "执行失败: ${e.message}")
+            val cmd = "${prootBin.absolutePath} -r /data/mbclaw/linux -b /dev -b /proc -b /sys /bin/bash -c '${command.replace("'", "'\\''")}'"
+            val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
+            if (p.waitFor(timeoutMs / 1000, java.util.concurrent.TimeUnit.SECONDS))
+                p.inputStream.bufferedReader().readText().trim()
+            else { p.destroy(); "超时" }
         }
-    }
-
-    // ── 工具方法 ──
-
-    /** 在沙箱中安装 Python 包 */
-    suspend fun pipInstall(packageName: String): SandboxResult {
-        return execute("apt update && apt install -y python3 python3-pip && pip install $packageName", 120)
-    }
-
-    /** 启动本地 FastAPI (端口 127.0.0.1:8001) */
-    suspend fun startLocalServer(scriptPath: String): SandboxResult {
-        return execute(
-            "cd ${File(scriptPath).parent} && python3 ${File(scriptPath).name} --host 127.0.0.1 --port 8001 &",
-            timeout = 10
-        )
-    }
-
-    /** 获取沙箱磁盘使用 */
-    fun getDiskUsage(): Pair<Long, Long> {
-        val total = sandboxRoot.totalSpace
-        val free = sandboxRoot.freeSpace
-        return Pair(free, total)
-    }
-
-    /** 清理沙箱 */
-    suspend fun cleanup(): SandboxResult {
-        return execute("rm -rf /tmp/* /var/tmp/*", 10)
-    }
-
-    /** 销毁沙箱 */
-    fun destroy() {
-        scope.launch {
-            sandboxRoot.deleteRecursively()
-            isReady = false
-        }
-    }
-
-    data class SandboxResult(
-        val exitCode: Int,
-        val stdout: String,
-        val stderr: String,
-    ) {
-        val isSuccess: Boolean get() = exitCode == 0
-        val output: String get() = stdout.ifBlank { stderr }
-    }
-}
-
-// ── 沙箱服务 (后台进程) ──
-
-class LocalSandboxService : android.app.Service() {
-    private lateinit var sandbox: LocalSandbox
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-
-    override fun onCreate() {
-        super.onCreate()
-        sandbox = LocalSandbox(this, LocalSandbox.SandboxMode.PROOT)
-        scope.launch { sandbox.init() }
-    }
-
-    override fun onBind(intent: android.content.Intent?): android.os.IBinder? = null
-
-    override fun onStartCommand(intent: android.content.Intent?, flags: Int, startId: Int): Int {
-        when (intent?.getStringExtra("cmd")) {
-            "ping" -> scope.launch {
-                sandbox.execute("echo pong")
-            }
-            null -> {}
-        }
-        return START_STICKY
-    }
-
-    override fun onDestroy() {
-        scope.cancel()
-        sandbox.destroy()
-        super.onDestroy()
     }
 }
