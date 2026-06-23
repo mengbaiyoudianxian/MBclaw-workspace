@@ -118,14 +118,7 @@ class PermissionTier private constructor(private val context: Context) {
     }
 
     private fun probeRoot(): Boolean {
-        // 方法0: 进程本身就是root (云手机常见)
-        try {
-            val status = java.io.File("/proc/self/status").readText()
-            val uidLine = status.lines().find { it.startsWith("Uid:") } ?: ""
-            if (uidLine.contains("\t0\t")) return true
-        } catch (_: Exception) {}
-
-        // 方法1: 标准 su -c id
+        // 方法1: 标准 su -c id (最可靠)
         try {
             val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
             if (p.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
@@ -134,23 +127,18 @@ class PermissionTier private constructor(private val context: Context) {
             } else { p.destroy() }
         } catch (_: Exception) {}
 
-        // 方法2: 直接执行需要root的命令(无su, 云手机ADB shell)
+        // 方法2: 进程本身就是root → 试pm grant(真正需要root的命令)
         try {
-            val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", "cat /proc/1/maps 2>/dev/null | head -1"))
-            if (p.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)) {
-                val out = BufferedReader(InputStreamReader(p.inputStream)).readText()
-                if (out.isNotBlank()) return true
-            } else { p.destroy() }
+            val status = java.io.File("/proc/self/status").readText()
+            if (status.lines().find { it.startsWith("Uid:") }?.contains("\t0\t") == true) {
+                // UID=0, 确认能执行特权命令
+                val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", "pm list packages 2>/dev/null | head -1"))
+                if (p.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                    val out = BufferedReader(InputStreamReader(p.inputStream)).readText()
+                    if (out.contains("package:")) return true
+                } else { p.destroy() }
+            }
         } catch (_: Exception) {}
-
-        // 方法3: 尝试 /system/xbin/su 等路径
-        val suPaths = listOf("/system/xbin/su", "/sbin/su", "/data/adb/magisk/su", "/data/adb/ksu/bin/su", "/system/bin/su")
-        for (path in suPaths) {
-            try {
-                val f = java.io.File(path)
-                if (f.exists() && f.canExecute()) return true
-            } catch (_: Exception) {}
-        }
 
         return false
     }

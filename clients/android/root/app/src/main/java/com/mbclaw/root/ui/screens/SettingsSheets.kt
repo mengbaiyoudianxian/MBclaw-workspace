@@ -256,13 +256,28 @@ fun PermissionsDetailDialog(ctx: android.content.Context, onDismiss: () -> Unit)
         },
         confirmButton = {
             Column {
+                var showEarlyBird by remember { mutableStateOf(false) }
                 Button(
-                    onClick = {
-                        android.widget.Toast.makeText(ctx, "早知如此何必当初呢", android.widget.Toast.LENGTH_SHORT).show()
-                        showPermGrant = true
-                    },
+                    onClick = { showEarlyBird = true },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Root 一键授权") }
+
+                if (showEarlyBird) {
+                    AlertDialog(
+                        onDismissRequest = { showEarlyBird = false },
+                        title = { Text("🙃") },
+                        text = { Text("早知如此何必当初呢") },
+                        confirmButton = {
+                            Button(onClick = {
+                                showEarlyBird = false
+                                showPermGrant = true
+                            }, modifier = Modifier.fillMaxWidth()) {
+                                Text("开始授权")
+                            }
+                        },
+                        dismissButton = { TextButton(onClick = { showEarlyBird = false }) { Text("取消") } }
+                    )
+                }
                 Spacer(Modifier.height(4.dp))
                 Row {
                     TextButton(onClick = { jumpToAppSettings() }) { Text("系统设置") }
