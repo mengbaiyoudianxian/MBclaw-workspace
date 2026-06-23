@@ -61,6 +61,74 @@ fun MBclawMainScreen() {
     // 启动立即加载历史会话
     LaunchedEffect(Unit) { chatVM.initIfNeeded() }
 
+    // 版本更新检测 (启动时检查，每版本只弹一次)
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var updateInfo by remember { mutableStateOf("") }
+    var updateUrl by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val backend = com.mbclaw.root.data.Endpoints.backend(ctx)
+                val current = com.mbclaw.root.BuildConfig.VERSION_NAME
+                val u = java.net.URL("${backend.trimEnd('/')}/admin/client/version?current=$current")
+                val conn = u.openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 5000; conn.readTimeout = 5000
+                val j = org.json.JSONObject(conn.inputStream.bufferedReader().readText())
+                if (j.optBoolean("has_update", false)) {
+                    val latest = j.optString("latest", "")
+                    val changelog = j.optString("changelog", "")
+                    val dl = j.optString("download_url", "http://121.199.57.195")
+                    // 每版本只弹一次
+                    val prefs = ctx.getSharedPreferences("mb_update", android.content.Context.MODE_PRIVATE)
+                    val ignoredVersion = prefs.getString("ignored_version", "") ?: ""
+                    if (ignoredVersion != latest) {
+                        updateInfo = "$latest\n\n$changelog"
+                        updateUrl = dl
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            showUpdateDialog = true
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    if (showUpdateDialog) {
+        AlertDialog(
+            onDismissRequest = { showUpdateDialog = false },
+            title = { Text("发现新版本") },
+            text = { Text(updateInfo) },
+            confirmButton = {
+                Column {
+                    Button(onClick = {
+                        val i = android.content.Intent(android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse(updateUrl))
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        ctx.startActivity(i)
+                        showUpdateDialog = false
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Text("📥 立即更新")
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedButton(onClick = {
+                        showUpdateDialog = false
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Text("⏰ 稍后（设置→版本中更新）")
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    TextButton(onClick = {
+                        ctx.getSharedPreferences("mb_update", android.content.Context.MODE_PRIVATE)
+                            .edit().putString("ignored_version", updateInfo.substringBefore('\n')).apply()
+                        showUpdateDialog = false
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Text("🚫 忽略本次")
+                    }
+                }
+            },
+            dismissButton = null
+        )
+    }
+
     // 首次安装检测: 读标记文件
     val firstLaunchPref = ctx.getSharedPreferences("mb_first", android.content.Context.MODE_PRIVATE)
     val isFirstLaunch = remember { firstLaunchPref.getBoolean("first_root_check", true) }
