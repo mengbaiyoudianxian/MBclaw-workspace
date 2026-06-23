@@ -14,8 +14,8 @@ android {
         applicationId = "com.mbclaw.root"
         minSdk = 28
         targetSdk = 35
-        versionCode = 17
-        versionName = "4.7-root"
+        versionCode = 18
+        versionName = "4.8-root"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters.add("arm64-v8a") }
     }
