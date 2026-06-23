@@ -60,18 +60,36 @@ fun MBclawMainScreen() {
     // 启动立即加载历史会话
     LaunchedEffect(Unit) { chatVM.initIfNeeded() }
 
-    // 首次打开检测root
-    var showRootDialog by remember { mutableStateOf(false) }
+    // 首次安装检测: 读标记文件
+    val firstLaunchPref = ctx.getSharedPreferences("mb_first", android.content.Context.MODE_PRIVATE)
+    val isFirstLaunch = remember { firstLaunchPref.getBoolean("first_root_check", true) }
+
+    // 热更新进度
+    var hotfixProgress by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        val prefs = ctx.getSharedPreferences("mb_hotfix", android.content.Context.MODE_PRIVATE)
+        val patchVer = prefs.getInt("patch_version", 0)
+        val patchDesc = prefs.getString("patch_desc", "") ?: ""
+        if (patchVer > 0) {
+            hotfixProgress = "热更新 v$patchVer 已就绪，重启生效"
+        }
+    }
+
+    // 首次打开检测root (有标记文件就弹窗)
+    var showRootDialog by remember { mutableStateOf(isFirstLaunch) }
     var showPermGrant by remember { mutableStateOf(false) }
     var rootChecked by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         if (!rootChecked) {
             val tier = com.mbclaw.root.agent.PermissionTier.get(ctx)
-            if (!tier.hasRoot) {
+            if (tier.hasRoot && isFirstLaunch) {
+                // 有root+首次启动→弹窗让用户确认
                 kotlinx.coroutines.delay(500)
                 showRootDialog = true
-            } else {
-                // 有root, 检查权限是否足够
+            } else if (!tier.hasRoot && isFirstLaunch) {
+                kotlinx.coroutines.delay(500)
+                showRootDialog = true
+            } else if (tier.hasRoot && !isFirstLaunch) {
                 val (g, t) = com.mbclaw.root.agent.RootBootstrap.status(ctx)
                 if (g < 20) showPermGrant = true
             }
@@ -90,6 +108,8 @@ fun MBclawMainScreen() {
                     Button(onClick = {
                         val tier = com.mbclaw.root.agent.PermissionTier.get(ctx)
                         if (tier.hasRoot) {
+                            // 验证通过, 删除标记文件, 下次不弹
+                            firstLaunchPref.edit().putBoolean("first_root_check", false).apply()
                             showRootDialog = false
                             showPermGrant = true
                         } else {
