@@ -100,9 +100,6 @@ class MBclawRootApp : Application() {
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             kotlinx.coroutines.delay(3000)
             com.mbclaw.root.agent.HotfixLoader.checkAndDownload(this@MBclawRootApp)
-            if (updated) {
-                android.util.Log.i("MBclaw", "热更新已应用")
-            }
         }
     }
 

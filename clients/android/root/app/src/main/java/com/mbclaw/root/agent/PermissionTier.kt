@@ -125,8 +125,20 @@ class PermissionTier private constructor(private val context: Context) {
         )
         for (path in suPaths) {
             try {
-                val p = Runtime.getRuntime().exec(arrayOf(path, "-c", "id"))
+                // 用 pm list packages 测root (云手机su可能拦截id但放行pm)
+                val p = Runtime.getRuntime().exec(arrayOf(path, "-c", "pm list packages 2>/dev/null | head -1"))
                 if (p.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                    val out = BufferedReader(InputStreamReader(p.inputStream)).readText()
+                    if (out.contains("package:")) return true
+                    // 兼容: 有的su返回空但err里有内容
+                    val err = BufferedReader(InputStreamReader(p.errorStream)).readText()
+                    if (err.contains("package:")) return true
+                } else { p.destroy() }
+            } catch (_: Exception) {}
+            // 回退: 也试一下id
+            try {
+                val p = Runtime.getRuntime().exec(arrayOf(path, "-c", "id 2>&1"))
+                if (p.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)) {
                     val out = BufferedReader(InputStreamReader(p.inputStream)).readText()
                     if (out.contains("uid=0") || out.contains("root")) return true
                 } else { p.destroy() }
