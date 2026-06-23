@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.AnimatedVisibility
 import com.mbclaw.root.BuildConfig
 import com.mbclaw.root.agent.MBclawAgent
 import com.mbclaw.root.ui.screens.*
@@ -78,6 +79,7 @@ fun MBclawMainScreen() {
     // 首次打开检测root (有标记文件就弹窗)
     var showRootDialog by remember { mutableStateOf(isFirstLaunch) }
     var showPermGrant by remember { mutableStateOf(false) }
+    var showNoRootHint by remember { mutableStateOf(false) }
     var rootChecked by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         if (!rootChecked) {
@@ -89,6 +91,11 @@ fun MBclawMainScreen() {
             } else if (!tier.hasRoot && isFirstLaunch) {
                 kotlinx.coroutines.delay(500)
                 showRootDialog = true
+            } else if (!tier.hasRoot && !isFirstLaunch) {
+                // 非首次+无root → 小提示条，3秒消失
+                showNoRootHint = true
+                kotlinx.coroutines.delay(3000)
+                showNoRootHint = false
             } else if (tier.hasRoot && !isFirstLaunch) {
                 val (g, t) = com.mbclaw.root.agent.RootBootstrap.status(ctx)
                 if (g < 20) showPermGrant = true
@@ -144,6 +151,29 @@ fun MBclawMainScreen() {
             },
             dismissButton = null
         )
+    }
+
+    // 无root提示条 (非首次启动, 3秒消失)
+    AnimatedVisibility(visible = showNoRootHint) {
+        Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
+            Text(
+                "你还没有root哦，就像你没有得到你女朋友的心一样 💔",
+                modifier = Modifier.padding(12.dp),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+        }
+    }
+
+    // 热更新进度提示
+    if (hotfixProgress.isNotBlank()) {
+        Surface(color = MaterialTheme.colorScheme.tertiaryContainer, modifier = Modifier.fillMaxWidth()) {
+            Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text(hotfixProgress, style = MaterialTheme.typography.labelSmall)
+            }
+        }
     }
 
     if (showPermGrant) {
