@@ -33,8 +33,16 @@ class PermissionTier private constructor(private val context: Context) {
 
     private val shizuku by lazy { ShizukuManager(context).also { it.init() } }
 
-    /** 真实可用的 root：必须 su 授权且能返回标记 */
-    val hasRoot: Boolean by lazy { probeRoot() }
+    /** 真实可用的 root：短缓存(5秒)，避免每次调工具都 su -c id */
+    @Volatile private var rootCache: Boolean? = null
+    @Volatile private var rootCacheTime: Long = 0
+    val hasRoot: Boolean get() {
+        val now = System.currentTimeMillis()
+        if (rootCache != null && now - rootCacheTime < 5000) return rootCache!!
+        rootCache = probeRoot()
+        rootCacheTime = now
+        return rootCache!!
+    }
 
     /** Shizuku/ADB 通道是否就绪 */
     val hasAdb: Boolean get() = shizuku.isReady()
