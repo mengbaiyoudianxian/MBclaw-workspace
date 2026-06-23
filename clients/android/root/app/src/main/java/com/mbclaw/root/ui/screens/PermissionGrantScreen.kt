@@ -53,7 +53,7 @@ fun PermissionGrantScreen(
     var statusText by remember { mutableStateOf("") }
     var brand by remember { mutableStateOf("") }
     var androidVer by remember { mutableStateOf("") }
-    var sdkInt by remember { mutableIntStateOf(0) }
+    var sdkInt by remember { mutableStateOf(0) }
     var template by remember { mutableStateOf<JSONObject?>(null) }
     var showSkipWarning by remember { mutableStateOf(false) }
 

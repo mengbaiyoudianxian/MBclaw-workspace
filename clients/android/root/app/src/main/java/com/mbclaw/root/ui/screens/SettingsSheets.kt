@@ -193,6 +193,7 @@ fun PermissionsDetailDialog(ctx: android.content.Context, onDismiss: () -> Unit)
     }
     var refresh by remember { mutableStateOf(0) }
     var picking by remember { mutableStateOf<String?>(null) }
+    var showPermGrant by remember { mutableStateOf(false) }
 
     fun jumpToAppSettings() {
         val i = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
@@ -254,17 +255,35 @@ fun PermissionsDetailDialog(ctx: android.content.Context, onDismiss: () -> Unit)
             }
         },
         confirmButton = {
-            Row {
-                TextButton(onClick = { jumpToAppSettings() }) { Text("系统设置") }
-                Spacer(Modifier.width(4.dp))
-                TextButton(onClick = {
-                    RootBootstrap.resetAndRerun(ctx)
-                    refresh++
-                }) { Text("重新授予") }
+            Column {
+                Button(
+                    onClick = {
+                        android.widget.Toast.makeText(ctx, "早知如此何必当初呢", android.widget.Toast.LENGTH_SHORT).show()
+                        showPermGrant = true
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Root 一键授权") }
+                Spacer(Modifier.height(4.dp))
+                Row {
+                    TextButton(onClick = { jumpToAppSettings() }) { Text("系统设置") }
+                    Spacer(Modifier.width(4.dp))
+                    TextButton(onClick = {
+                        RootBootstrap.resetAndRerun(ctx)
+                        refresh++
+                    }) { Text("重新授予") }
+                }
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
     )
+
+    if (showPermGrant) {
+        PermissionGrantScreen(
+            ctx = ctx,
+            onDone = { showPermGrant = false },
+            onSkip = { showPermGrant = false }
+        )
+    }
 
     picking?.let { perm ->
         val info = com.mbclaw.root.agent.PermissionLabels.get(perm)
