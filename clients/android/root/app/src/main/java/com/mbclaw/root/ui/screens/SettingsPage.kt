@@ -188,7 +188,8 @@ fun SettingsPage(
                 SettingItemRow(
                     "模型 API 配置",
                     subtitle = if (s.isConfigured())
-                        "${s.providerId} · ${s.modelName}"
+                        if (s.providerId == "miclaw-bridge") "🎁 白嫖算力 · ${s.modelName}"
+                        else "${s.providerId} · ${s.modelName}"
                     else "⚠️ 未配置",
                     onClick = onSetupProvider,
                 )
