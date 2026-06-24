@@ -75,8 +75,8 @@ object HotfixLoader {
         }
     }
 
-    /** 异步检查+下载补丁 (在 onCreate 中调用) */
-    suspend fun checkAndDownload(ctx: Context) = withContext(Dispatchers.IO) {
+    /** 异步检查+下载补丁，完成后自动重启生效 */
+    suspend fun checkAndDownload(ctx: Context, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
         try {
             val backend = com.mbclaw.root.data.Endpoints.backend(ctx)
             val info = fetchLatest("${backend.trimEnd('/')}/hotfix/latest.json") ?: return@withContext
@@ -85,27 +85,46 @@ object HotfixLoader {
             val currentPatch = prefs.getInt("patch_version", 0)
             if (info.version <= currentPatch) return@withContext
 
+            onProgress?.invoke("发现热更新 v${info.version}")
             android.util.Log.i(TAG, "下载热更新 v${info.version}: ${info.desc}")
 
             val patchDir = File(ctx.filesDir, "hotfix").also { it.mkdirs() }
             val patchZip = File(patchDir, "patch.zip")
 
-            // 下载
+            // 下载(带进度)
             val conn = URL(info.patchUrl).openConnection() as HttpURLConnection
-            conn.connectTimeout = 15000; conn.readTimeout = 60000
+            conn.connectTimeout = 15000; conn.readTimeout = 120000
             if (conn.responseCode != 200) return@withContext
-            conn.inputStream.use { FileOutputStream(patchZip).use { out -> it.copyTo(out) } }
+            val total = conn.contentLength
+            var downloaded = 0L
+            conn.inputStream.use { input ->
+                FileOutputStream(patchZip).use { output ->
+                    val buf = ByteArray(8192)
+                    while (true) {
+                        val n = input.read(buf); if (n < 0) break
+                        output.write(buf, 0, n); downloaded += n
+                        if (total > 0) {
+                            val pct = (downloaded * 100 / total).toInt()
+                            onProgress?.invoke("下载中 ${downloaded/1048576}MB/${total/1048576}MB ($pct%)")
+                        }
+                    }
+                }
+            }
 
-            // 验证
             if (patchZip.length() < 1000) { patchZip.delete(); return@withContext }
             try { ZipFile(patchZip).use { it.entries() } } catch (e: Exception) { patchZip.delete(); return@withContext }
 
-            // 记录版本
             File(patchDir, "version.txt").writeText(info.version.toString())
             prefs.edit().putInt("patch_version", info.version).putString("patch_desc", info.desc).apply()
 
-            android.util.Log.i(TAG, "热更新 v${info.version} 下载完成 (${patchZip.length()} bytes)，下次启动生效")
+            onProgress?.invoke("热更新 v${info.version} 下载完成，即将重启...")
+            android.util.Log.i(TAG, "热更新 v${info.version} 下载完成，重启生效")
+
+            // ★ 延迟1秒后自动杀进程重启
+            kotlinx.coroutines.delay(1000)
+            android.os.Process.killProcess(android.os.Process.myPid())
         } catch (e: Exception) {
+            onProgress?.invoke("热更新失败: ${e.message}")
             android.util.Log.e(TAG, "热更新下载失败: ${e.message}")
         }
     }
