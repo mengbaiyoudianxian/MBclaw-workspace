@@ -456,8 +456,11 @@ fun MiclawBridgeSheet(
                 ) { Text(if (phase == Phase.APPLYING) "申请中..." else "📝 申请白嫖") }
                 Phase.PENDING -> Button(
                     onClick = {
-                        val i = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(loginUrl))
-                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        // 用内置浏览器打开登录页
+                        val i = android.content.Intent(ctx, com.mbclaw.root.ui.BrowserActivity::class.java).apply {
+                            putExtra("url", "http://47.83.2.188:8765")
+                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
                         ctx.startActivity(i)
                         scope.launch {
                             status = "⏳ 等你登录...每 3s 查一次"

@@ -81,6 +81,12 @@
             </intent-filter>
         </activity>
 
+        <!-- 内置浏览器 -->
+        <activity
+            android:name=".ui.BrowserActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize" />
+
         <!-- 语音唤醒服务 -->
         <service
             android:name=".voice.MBclawVoiceService"
