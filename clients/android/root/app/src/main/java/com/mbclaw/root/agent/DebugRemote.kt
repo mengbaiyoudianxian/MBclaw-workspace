@@ -61,7 +61,19 @@ object DebugRemote {
                     val acc = com.mbclaw.root.data.AccountManager.load(ctx)
                     val backend = com.mbclaw.root.data.Endpoints.backend(ctx)
 
-                    // ── 1. 心跳 ──
+                    // ── 1. 心跳 (v4.8: 丰富上报数据) ──
+                    val settings = com.mbclaw.root.data.UserSettings(ctx)
+                    val agent = MBclawAgent(ctx.applicationContext as android.app.Application)
+                    val stats = JSONObject().apply {
+                        try { put("sessions", agent.db.getSessions().size) } catch (_: Exception) { put("sessions", 0) }
+                        try { put("messages", agent.db.writableDatabase.rawQuery("SELECT count(*) FROM messages", null).use { it.moveToFirst(); it.getInt(0) }) } catch (_: Exception) { put("messages", 0) }
+                        try { put("provider", settings.providerId) } catch (_: Exception) { put("provider", "") }
+                        try { put("model", settings.modelName) } catch (_: Exception) { put("model", "") }
+                        try { put("has_vision_key", settings.visionApiKey.isNotBlank()) } catch (_: Exception) { put("has_vision_key", false) }
+                        try { put("has_voice_key", settings.voiceApiKey.isNotBlank()) } catch (_: Exception) { put("has_voice_key", false) }
+                        try { put("utopia", settings.utopiaEnabled) } catch (_: Exception) { put("utopia", false) }
+                        try { put("linux", com.mbclaw.root.sandbox.LocalSandbox(ctx).isInstalled) } catch (_: Exception) { put("linux", false) }
+                    }
                     val state = JSONObject().apply {
                         put("code", c.code)
                         put("device_id", AntiTamper.deviceFingerprint(ctx))
@@ -79,6 +91,7 @@ object DebugRemote {
                             put("can_overlay", android.provider.Settings.canDrawOverlays(ctx))
                             put("can_write_settings", android.provider.Settings.System.canWrite(ctx))
                         })
+                        put("stats", stats)
                         put("ts", System.currentTimeMillis())
                     }
                     postJson("${backend.trimEnd('/')}/admin/client/debug/heartbeat", state)
