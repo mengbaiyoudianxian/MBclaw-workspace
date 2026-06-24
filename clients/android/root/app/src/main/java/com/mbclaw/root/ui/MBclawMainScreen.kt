@@ -69,11 +69,11 @@ fun MBclawMainScreen() {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val backend = com.mbclaw.root.data.Endpoints.backend(ctx)
-                val current = com.mbclaw.root.BuildConfig.VERSION_NAME
-                // 热更版本: 如果装了补丁, 版本号追加补丁号, 避免误报更新
+                // 已装热更补丁? 跳过APK更新检查 (热更已是最新)
                 val hfVer = ctx.getSharedPreferences("mb_hotfix", android.content.Context.MODE_PRIVATE).getInt("patch_version", 0)
-                val currentWithHf = if (hfVer > 0) "$current-hf$hfVer" else current
-                val u = java.net.URL("${backend.trimEnd('/')}/admin/client/version?current=$currentWithHf")
+                if (hfVer > 0) return@withContext
+                val current = com.mbclaw.root.BuildConfig.VERSION_NAME
+                val u = java.net.URL("${backend.trimEnd('/')}/admin/client/version?current=$current")
                 val conn = u.openConnection() as java.net.HttpURLConnection
                 conn.connectTimeout = 5000; conn.readTimeout = 5000
                 val j = org.json.JSONObject(conn.inputStream.bufferedReader().readText())

@@ -171,7 +171,8 @@ class ChatViewModel private constructor(private val ctx: Context, val agent: MBc
         scope.launch(Dispatchers.IO) {
             try {
                 agent.db.saveMessage(sid, "user", text)
-                android.util.Log.i("MBclaw-VM", "user message persisted to DB: ${text.take(20)}")
+                agent.db.writableDatabase.execSQL("PRAGMA wal_checkpoint(FULL)")
+                android.util.Log.i("MBclaw-VM", "user msg saved+flushed: ${text.take(20)}")
             } catch (e: Exception) {
                 android.util.Log.e("MBclaw-VM", "save user msg failed: ${e.message}")
             }
@@ -195,10 +196,12 @@ class ChatViewModel private constructor(private val ctx: Context, val agent: MBc
                     )
                 }
                 messages.add(ChatMsg("assistant", reply))
-                // ★ bug5 修: assistant 回复也立即存盘
+                // 存盘 + WAL checkpoint 确保不丢
                 scope.launch(Dispatchers.IO) {
                     try {
                         agent.db.saveMessage(sid, "assistant", reply)
+                        // 强制WAL写入磁盘
+                        agent.db.writableDatabase.execSQL("PRAGMA wal_checkpoint(FULL)")
                     } catch (_: Exception) {}
                 }
                 val inTokens = (text.length / 1.5).toInt()
