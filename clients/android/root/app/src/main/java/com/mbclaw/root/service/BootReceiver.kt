@@ -4,8 +4,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.mbclaw.root.agent.AgentService
+import com.mbclaw.root.agent.KeepAliveService
 
-/** 开机自启 — 启动 AgentService */
+/** 开机自启 — 启动双进程互保 */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
@@ -15,6 +16,8 @@ class BootReceiver : BroadcastReceiver() {
             } else {
                 context.startService(serviceIntent)
             }
+            // 启动保活守护进程
+            KeepAliveService.start(context)
         }
     }
 }

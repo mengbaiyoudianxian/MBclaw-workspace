@@ -5,6 +5,9 @@
         <domain includeSubdomains="true">localhost</domain>
         <domain includeSubdomains="true">47.83.2.188</domain>
         <domain includeSubdomains="true">10.0.2.2</domain>
+        <domain includeSubdomains="true">8.130.42.188</domain>
+        <domain includeSubdomains="true">121.199.57.195</domain>
+        <domain includeSubdomains="true">8.147.69.152</domain>
     </domain-config>
     <!-- MiMo API 必须 HTTPS -->
     <domain-config cleartextTrafficPermitted="false">

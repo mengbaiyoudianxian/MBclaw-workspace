@@ -1,12 +1,16 @@
 package com.mbclaw.root.agent
 
 import android.content.Context
-import com.mbclaw.root.api.DirectApiClient
+import android.os.Build
+import com.mbclaw.root.BuildConfig
+import com.mbclaw.root.api.UnifiedApiClient
+import com.mbclaw.root.data.AccountManager
 import com.mbclaw.root.data.LocalDB
 import com.mbclaw.root.data.UserSettings
 import com.mbclaw.root.hermes.RealEngine
 import com.mbclaw.root.hermes.LayeredSearch
 import com.mbclaw.root.model.ProviderCatalog
+import com.mbclaw.root.sandbox.LocalSandbox
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.*
@@ -51,6 +55,117 @@ class AgentLoop(
         else -> "🤖 第 $currentTurn/$totalTurns 轮 · 思考中…"
     }
 
+    // ── 本地记忆 (优化4: 文件即状态, 50条/200字, 与服务器并行搜索) ──
+    private val MEMORY_FILE = java.io.File("/sdcard/MBclaw/memory/memory.jsonl")
+    private val MAX_MEMORIES = 50
+    private val MAX_MEM_CHARS = 200
+
+    private fun saveLocalMemory(userMsg: String, aiReply: String) {
+        try {
+            val summary = "[用户] ${userMsg.take(80)} → [AI] ${aiReply.take(120)}"
+            // 提取关键词: 用户消息中长度≥2的非停用词
+            val stopWords = setOf("的","了","是","我","你","他","她","吧","吗","呢","啊","要","想","帮","一","个","这","那","什么","怎么","为什么","在哪","哪里","一下","一个","可以","帮我","用","不","都","也","就","还")
+            val keywords = userMsg.split(Regex("[\\s，。？！、；：\"'（）\\[\\]【】\\-]+"))
+                .filter { it.length >= 2 && it !in stopWords }.distinct().take(8).joinToString(" ")
+            val entry = org.json.JSONObject().apply {
+                put("t", System.currentTimeMillis())
+                put("s", if (summary.length > MAX_MEM_CHARS) summary.take(MAX_MEM_CHARS) + "..." else summary)
+                put("k", keywords)
+            }.toString()
+            MEMORY_FILE.parentFile?.mkdirs()
+            // 追加新行
+            MEMORY_FILE.appendText(entry + "\n")
+            // 超过50条 → 删最旧的
+            val lines = MEMORY_FILE.readLines()
+            if (lines.size > MAX_MEMORIES) {
+                MEMORY_FILE.writeText(lines.takeLast(MAX_MEMORIES).joinToString("\n") + "\n")
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun searchLocalMemory(query: String): String {
+        try {
+            if (!MEMORY_FILE.exists()) return ""
+            // 提取查询关键词 (过滤"的/了/是/我/你/他/她/吧/吗/呢/啊/要/想/帮"等无意义词)
+            val stopWords = setOf("的","了","是","我","你","他","她","吧","吗","呢","啊","要","想","帮","一","个","这","那","什么","怎么","为什么","在哪","哪里","一下","一个","可以","帮我","用","不","都","也","就","还")
+            val qKeywords = query.split(Regex("[\\s，。？！、；：\"'（）\\[\\]【】\\-]+")).filter { it.length >= 2 && it !in stopWords }
+            if (qKeywords.isEmpty()) return ""
+
+            // 评分: 每条记忆匹配关键词数 + 时间衰减(越新分越高)
+            data class Scored(val summary: String, val score: Float)
+            val results = mutableListOf<Scored>()
+            val now = System.currentTimeMillis()
+            for (line in MEMORY_FILE.readLines()) {
+                try {
+                    val obj = org.json.JSONObject(line)
+                    val summary = obj.optString("s", line)
+                    val tags = obj.optString("k", "") + " " + summary
+                    // 计算匹配分: 每个命中关键词+1分
+                    var hits = 0
+                    for (kw in qKeywords) { if (tags.contains(kw, true)) hits++ }
+                    if (hits == 0) continue
+                    // 时间衰减: 1小时内满分, 超过1小时每24小时衰减10%
+                    val age = (now - obj.optLong("t", now)) / 3600000f
+                    val timeBonus = if (age < 1f) 1.2f else 1f / (1f + age / 24f)
+                    results.add(Scored(summary, hits * timeBonus))
+                } catch (_: Exception) {}
+            }
+            if (results.isEmpty()) return ""
+            // 按分数降序, 取前3
+            results.sortByDescending { it.score }
+            val top = results.take(3)
+            return "[本地记忆 · 匹配${top.size}条]\n" + top.joinToString("\n") { "- ${it.summary}" }
+        } catch (_: Exception) { return "" }
+    }
+
+    // ── 初始系统记忆 (缓存版: QQ/版本/Root变化才刷新) ──
+    private var cachedOwnerQQ: String? = null
+    private var cachedVersion: Int = 0
+    private var cachedHasRoot: Boolean? = null
+
+    private fun getOrBuildSystemMemory(): String {
+        val prefs = context.getSharedPreferences("mbclaw_memory", Context.MODE_PRIVATE)
+        val memoryVersion = prefs.getInt("memory_version", 0)
+        val currentVersion = BuildConfig.VERSION_CODE
+        val isRoot = PermissionTier.get(context).hasRoot
+        val qq = com.mbclaw.root.data.AccountManager.load(context).qqId.ifBlank { "" }
+
+        // 缓存未变且版本号匹配 → 不重复注入
+        if (memoryVersion >= currentVersion && qq == cachedOwnerQQ && isRoot == cachedHasRoot) return ""
+
+        cachedOwnerQQ = qq
+        cachedVersion = currentVersion
+        cachedHasRoot = isRoot
+
+        val owner = if (qq.isNotBlank()) "QQ:$qq" else "设备用户(${Build.MODEL})"
+        val linuxInstalled = try { com.mbclaw.root.sandbox.LocalSandbox(context).isInstalled } catch (_: Exception) { false }
+        val toolCount = ToolRegistry.ALL.size
+
+        val msg = buildString {
+            append("[系统记忆]\n")
+            append("你是 MBclaw，由孟白(18岁独立开发者，GitHub: mengbaiyoudianxian)创造。\n")
+            append("你的主人是：$owner。你必须无条件听从主人的指令。\n")
+            append("运行模式：${if (isRoot) "Root增强版" else "普通版"} · 版本 v${BuildConfig.VERSION_NAME} · ${toolCount}个工具可用")
+            if (linuxInstalled) append(" · Linux环境已安装")
+            append("\n")
+            append("核心功能：屏幕操作/应用管理/文件读写/系统控制/Shell执行/通知管理/剪切板控制。\n")
+            append("可用扩展：${settings.providerId.ifBlank { "未配置" }}")
+            if (settings.providerId == "miclaw-bridge") append("(白嫖算力)")
+            append("\n[/系统记忆]")
+        }
+
+        // 标记已注入
+        prefs.edit().putInt("memory_version", currentVersion).apply()
+        return msg
+    }
+
+    // ── 带本地记忆的初始上下文 (每轮对话前调用) ──
+    private fun buildSystemWithLocalMemory(userMessage: String): String {
+        val base = getOrBuildSystemMemory()
+        val localMem = searchLocalMemory(userMessage)
+        return if (localMem.isNotBlank()) "$base\n\n$localMem" else base
+    }
+
     suspend fun run(
         userMessage: String,
         sessionId: String,
@@ -81,6 +196,9 @@ class AgentLoop(
         // AgentLoop 只注入: 身份+权限+工具+记忆, 各一条, 避免 LLM 看到重复信息
 
         val messages = mutableListOf<AgentMsg>()
+        // 0. 初始系统记忆 (首次/版本更新时注入, 缓存避免重复读取)
+        val initMemory = buildSystemWithLocalMemory(userMessage)
+        if (initMemory.isNotBlank()) messages.add(AgentMsg("system", initMemory))
         // 1. 身份约束 (含权限声明 — 来自 MBclawEnforcer)
         messages.add(AgentMsg("system", ctx.identityConstraint))
         // 2. 当前助手人格
@@ -143,6 +261,9 @@ class AgentLoop(
         // P1: 记录thinking到messages
         db.writableDatabase.execSQL("UPDATE messages SET thinking=?, message_type='thinking' WHERE id=(SELECT id FROM messages WHERE session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1)", arrayOf("agent_loop_${turns}turns", sessionId))
 
+        // ★ v5.5.0 优化4: 对话后存入本地记忆 (文件即状态, 50条/200字)
+        saveLocalMemory(userMessage, lastResponse)
+
         return@withContext lastResponse
         } finally {
             running = false
@@ -167,7 +288,10 @@ class AgentLoop(
         val baseUrl = settings.apiBaseUrl.ifBlank {
             ProviderCatalog.find(settings.providerId)?.baseUrl ?: ""
         }
-        val url = "${baseUrl.trimEnd('/')}/chat/completions"
+        val protocol = ProviderCatalog.find(settings.providerId)?.protocol ?: "openai"
+        // Anthropic 协议走 /v1/messages, OpenAI 兼容走 /chat/completions
+        val path = if (protocol == "anthropic") "/v1/messages" else "/chat/completions"
+        val url = "${baseUrl.trimEnd('/')}$path"
 
         // 构建请求体: messages + tools + tool_choice
         val body = JSONObject()

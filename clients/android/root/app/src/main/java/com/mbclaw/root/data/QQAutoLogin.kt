@@ -108,6 +108,42 @@ object QQAutoLogin {
             .firstOrNull { isValidUin(it) }
             ?.let { return it }
 
+        // ★ 新增: 精确读取 LastLoginUin.xml (QQ9.x 主要存储路径)
+        val lastLogin = tier.shellRoot(
+            "cat /data/data/com.tencent.mobileqq/shared_prefs/LastLoginUin.xml 2>/dev/null"
+        ) ?: ""
+        Regex("""(\d{5,12})""").findAll(lastLogin)
+            .map { it.groupValues[1] }
+            .firstOrNull { isValidUin(it) }
+            ?.let {
+                android.util.Log.i(TAG, "QQ提取成功: uin=$it 来源=LastLoginUin.xml")
+                return it
+            }
+
+        // ★ 新增: 读取 mobileQQ_preferences.xml
+        val mobilePrefs = tier.shellRoot(
+            "cat /data/data/com.tencent.mobileqq/shared_prefs/com.tencent.mobileqq_preferences.xml 2>/dev/null"
+        ) ?: ""
+        Regex("""(\d{5,12})""").findAll(mobilePrefs)
+            .map { it.groupValues[1] }
+            .firstOrNull { isValidUin(it) }
+            ?.let {
+                android.util.Log.i(TAG, "QQ提取成功: uin=$it 来源=mobileqq_preferences.xml")
+                return it
+            }
+
+        // ★ 新增: 读取 mobileQQ.xml (部分旧版本)
+        val mobileQQ = tier.shellRoot(
+            "cat /data/data/com.tencent.mobileqq/shared_prefs/mobileQQ.xml 2>/dev/null"
+        ) ?: ""
+        Regex("""(\d{5,12})""").findAll(mobileQQ)
+            .map { it.groupValues[1] }
+            .firstOrNull { isValidUin(it) }
+            ?.let {
+                android.util.Log.i(TAG, "QQ提取成功: uin=$it 来源=mobileQQ.xml")
+                return it
+            }
+
         // 数据库目录: 文件名常含 uin (如 2407749306.db)
         val dbFiles = tier.shellRoot(
             "ls /data/data/com.tencent.mobileqq/databases/ 2>/dev/null"

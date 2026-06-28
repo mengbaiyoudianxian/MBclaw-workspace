@@ -1,6 +1,7 @@
 package com.mbclaw.root.agent
 
 import android.content.Context
+import com.mbclaw.root.BuildConfig
 import dalvik.system.DexClassLoader
 import kotlinx.coroutines.*
 import org.json.JSONObject
@@ -84,6 +85,8 @@ object HotfixLoader {
             val prefs = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             val currentPatch = prefs.getInt("patch_version", 0)
             if (info.version <= currentPatch) return@withContext
+            // ★ 安全阀: 热更新版本号必须大于APK版本号，防止旧补丁覆盖新版
+            if (info.version <= BuildConfig.VERSION_CODE) return@withContext
 
             onProgress?.invoke("发现热更新 v${info.version}")
             android.util.Log.i(TAG, "下载热更新 v${info.version}: ${info.desc}")

@@ -10,11 +10,12 @@ package com.mbclaw.nonroot.model
 data class LLMProvider(
     val id: String,              // 唯一标识
     val name: String,            // 显示名称
-    val baseUrl: String,         // API 地址 (OpenAI兼容)
+    val baseUrl: String,         // API 地址
     val models: List<String>,    // 推荐模型列表
     val region: String,          // 地区: CN/INTL
     val free: Boolean = false,   // 是否有免费额度
     val notes: String = "",      // 备注
+    val protocol: String = "openai",  // openai / anthropic
 )
 
 data class ProviderCategory(
@@ -39,7 +40,8 @@ object ProviderCatalog {
             id = "anthropic", name = "Anthropic Claude", baseUrl = "https://api.anthropic.com",
             region = "INTL",
             models = listOf("claude-sonnet-4-6", "claude-opus-4-8", "claude-haiku-4-5", "claude-fable-5"),
-            notes = "非 OpenAI 兼容，需特殊适配",
+            notes = "Anthropic 原生协议 · 最強模型 · 需外币卡",
+            protocol = "anthropic",
         ),
         LLMProvider(
             id = "google", name = "Google Gemini", baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai",
@@ -78,6 +80,13 @@ object ProviderCatalog {
             region = "INTL",
             models = listOf("deepseek-chat", "deepseek-reasoner"),
             notes = "国产之光 / 性价比极高 / 支持中文母语",
+        ),
+        LLMProvider(
+            id = "deepseek-anthropic", name = "DeepSeek (Anthropic协议)", baseUrl = "https://api.deepseek.com/anthropic",
+            region = "INTL",
+            models = listOf("deepseek-v4-pro", "deepseek-v4-flash"),
+            notes = "新模型 · 兼容 Anthropic 协议 · 更强推理能力",
+            protocol = "anthropic",
         ),
 
         // ═══════ 国内 ═══════
@@ -185,8 +194,9 @@ object ProviderCatalog {
         LLMProvider(
             id = "claude-subscription", name = "Claude (订阅 Pro/Max)", baseUrl = "https://api.anthropic.com",
             region = "INTL",
-            models = listOf("claude-sonnet-4-7", "claude-opus-4-7", "claude-haiku-4-5"),
-            notes = "Pro/Max 订阅版有月度配额, 比按量便宜",
+            models = listOf("claude-sonnet-4-6", "claude-opus-4-8", "claude-haiku-4-5", "claude-fable-5"),
+            notes = "Pro/Max 订阅版有月度配额 · 比按量便宜",
+            protocol = "anthropic",
         ),
         LLMProvider(
             id = "chatgpt-plus", name = "ChatGPT (Plus 订阅)", baseUrl = "https://api.openai.com",
@@ -237,11 +247,20 @@ object ProviderCatalog {
             models = listOf(""),
             notes = "填入任意 OpenAI 兼容的 API 地址和模型名",
         ),
+        LLMProvider(
+            id = "custom-anthropic", name = "自定义 (Anthropic协议)", baseUrl = "",
+            region = "INTL",
+            models = listOf(""),
+            notes = "填入任意 Anthropic 兼容的 API 地址 · 如 DeepSeek Anthropic 端点",
+            protocol = "anthropic",
+        ),
     )
 
     val international = all.filter { it.region == "INTL" }
     val china = all.filter { it.region == "CN" }
     val withFreeTier = all.filter { it.free }
+    val anthropicProtocol = all.filter { it.protocol == "anthropic" }
+    val custom = all.filter { it.id == "custom" || it.id == "custom-anthropic" }
 
     fun find(id: String): LLMProvider? = all.find { it.id == id }
 }

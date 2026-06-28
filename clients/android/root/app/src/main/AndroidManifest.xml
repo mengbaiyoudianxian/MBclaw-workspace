@@ -108,13 +108,23 @@
             </intent-filter>
         </service>
 
-        <!-- 后台 Agent 服务 -->
+        <!-- 后台 Agent 服务 — 杀不死: persistent + 前台常驻 + START_STICKY -->
         <service
             android:name=".agent.AgentService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="dataSync"
+            android:persistent="true"
+            android:directBootAware="true" />
 
-        <!-- 本地沙箱服务 -->
+        <!-- 保活守护进程 — 独立进程，互相监控，一个被杀另一个拉起 -->
+        <service
+            android:name=".agent.KeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:process=":keepalive"
+            android:persistent="true" />
+
+        <!-- 本地沙箱服务 — 独立进程 -->
         <service
             android:name=".sandbox.LocalSandboxService"
             android:exported="false"

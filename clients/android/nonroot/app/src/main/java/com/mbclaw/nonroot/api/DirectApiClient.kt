@@ -11,10 +11,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
 /**
- * 直连大模型 API — OpenAI 兼容格式
- *
- * 不依赖服务器，直接调 25 个提供商任一
- * 仅需 baseUrl + apiKey + modelName
+ * 直连大模型 API — OpenAI 兼容格式 (OpenAI / DeepSeek / 智谱 等)
  */
 
 data class ChatCompletionRequest(
@@ -26,7 +23,7 @@ data class ChatCompletionRequest(
 )
 
 data class ChatMessage(
-    val role: String,       // system / user / assistant
+    val role: String,
     val content: String,
 )
 
@@ -54,7 +51,7 @@ data class ApiErrorDetail(
 )
 
 /**
- * 直接调用 LLM API
+ * OpenAI 兼容协议客户端
  */
 object DirectApiClient {
 
@@ -66,15 +63,6 @@ object DirectApiClient {
 
     private val gson = Gson()
 
-    /**
-     * 发送聊天请求
-     *
-     * @param baseUrl  API 地址 (如 https://api.deepseek.com)
-     * @param apiKey   API Key
-     * @param model    模型名 (如 deepseek-chat)
-     * @param messages 消息历史
-     * @return 回复文本，失败时抛异常
-     */
     suspend fun chat(
         baseUrl: String,
         apiKey: String,
@@ -83,10 +71,7 @@ object DirectApiClient {
         utopiaEnabled: Boolean = false,
     ): String = withContext(Dispatchers.IO) {
         val url = "${baseUrl.trimEnd('/')}/chat/completions"
-        val body = ChatCompletionRequest(
-            model = model,
-            messages = messages,
-        )
+        val body = ChatCompletionRequest(model = model, messages = messages)
         val json = gson.toJson(body)
 
         val request = Request.Builder()
@@ -102,22 +87,35 @@ object DirectApiClient {
 
         if (response.isSuccessful) {
             val completion = gson.fromJson(responseBody, ChatCompletionResponse::class.java)
-            val content = completion.choices
-                ?.firstOrNull()
-                ?.message
-                ?.content
-            if (content != null) {
-                content
-            } else {
-                throw Exception("API 返回空内容: ${responseBody.take(200)}")
-            }
+            val content = completion.choices?.firstOrNull()?.message?.content
+            if (content != null) content
+            else throw Exception("API 返回空内容: ${responseBody.take(200)}")
         } else {
-            val err = try {
-                gson.fromJson(responseBody, ChatCompletionResponse::class.java)
-            } catch (_: Exception) { null }
-            val errMsg = err?.error?.message
-                ?: "HTTP ${response.code}: ${responseBody.take(200)}"
+            val err = try { gson.fromJson(responseBody, ChatCompletionResponse::class.java) } catch (_: Exception) { null }
+            val errMsg = err?.error?.message ?: "HTTP ${response.code}: ${responseBody.take(200)}"
             throw Exception(errMsg)
+        }
+    }
+}
+
+/**
+ * 统一入口 — 根据 protocol 自动路由
+ * "openai"     → DirectApiClient (OpenAI 兼容)
+ * "anthropic"  → AnthropicApiClient (Anthropic 原生)
+ */
+object UnifiedApiClient {
+
+    suspend fun chat(
+        baseUrl: String,
+        apiKey: String,
+        model: String,
+        messages: List<ChatMessage>,
+        protocol: String = "openai",
+        utopiaEnabled: Boolean = false,
+    ): String {
+        return when (protocol) {
+            "anthropic" -> AnthropicApiClient.chat(baseUrl, apiKey, model, messages, null, utopiaEnabled)
+            else -> DirectApiClient.chat(baseUrl, apiKey, model, messages, utopiaEnabled)
         }
     }
 }

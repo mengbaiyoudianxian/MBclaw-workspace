@@ -372,15 +372,63 @@ fun MiclawBridgeSheet(
     onDismiss: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var phase by remember { mutableStateOf(Phase.INTRO) }
-    var status by remember { mutableStateOf("点击「申请白嫖」，服务器会为你创建专属代理实例") }
-    var applicationId by remember { mutableStateOf("") }
+    // ★ 只有配置完整+服务器确认实例存活才显示运行状态
+    var alreadyConfigured by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        // 优先读本地缓存，关闭Sheet再打开时恢复状态
+        val prefs = ctx.getSharedPreferences("mbclaw_bridge", 0)
+        val cachedStatus = prefs.getString("bridge_status", null)
+        val cachedAppId = prefs.getString("app_id", null)
+        if (cachedStatus == "ready" || cachedStatus == "stopped") {
+            alreadyConfigured = cachedStatus == "ready"
+        }
+        // 异步向服务器验证真实状态，不一致时以服务器为准
+        if (settings.providerId == "miclaw-bridge" && settings.apiKey.isNotBlank()) {
+            try {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val checkId = cachedAppId ?: "active"
+                    val s = com.mbclaw.root.agent.MiclawBridge.status(settings.serverUrl, checkId)
+                    if (s.ready) {
+                        alreadyConfigured = true
+                        prefs.edit().putString("bridge_status", "ready").apply()
+                    } else {
+                        alreadyConfigured = false
+                        prefs.edit().putString("bridge_status", "stopped").apply()
+                    }
+                }
+            } catch (_: Exception) {
+                // 网络不通，信任本地缓存
+            }
+        }
+    }
+    var phase by remember { mutableStateOf(
+        when (ctx.getSharedPreferences("mbclaw_bridge", 0).getString("bridge_status", null)) {
+            "ready" -> Phase.READY
+            "stopped" -> Phase.STOPPED
+            else -> if (alreadyConfigured) Phase.READY else Phase.INTRO
+        }
+    )}
+    var applicationId by remember { mutableStateOf(ctx.getSharedPreferences("mbclaw_bridge", 0).getString("app_id", null)
+        ?: if (alreadyConfigured) "active" else "") }
+    var status by remember { mutableStateOf(
+        when (ctx.getSharedPreferences("mbclaw_bridge", 0).getString("bridge_status", null)) {
+            "ready" -> "🎉 实例运行中 · 模型: ${settings.modelName}"
+            "stopped" -> "代理已暂停 · 点击重新启动"
+            else -> if (alreadyConfigured) "🎉 实例运行中 · 模型: ${settings.modelName}" else "点击「申请白嫖」，服务器会为你创建专属代理实例"
+        }
+    )}
     var loginUrl by remember { mutableStateOf("") }
     val account = remember { com.mbclaw.root.data.AccountManager.load(ctx) }
     val userId = remember { account.qqId.ifBlank { account.weixinId }.ifBlank { "anonymous_${System.currentTimeMillis() / 1000}" } }
 
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface) {
         Column(Modifier.padding(20.dp).fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Filled.Close, "关闭", tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(20.dp))
+                }
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.size(40.dp)) {
                     Box(contentAlignment = Alignment.Center) { Text("🎁", style = MaterialTheme.typography.titleLarge) }
@@ -443,8 +491,35 @@ fun MiclawBridgeSheet(
                             } else if (r.approved) {
                                 applicationId = r.applicationId
                                 loginUrl = r.loginUrl
+                                // ★ 持久化保存applicationId+状态
+                                ctx.getSharedPreferences("mbclaw_bridge", 0).edit()
+                                    .putString("app_id", r.applicationId)
+                                    .putString("bridge_status", "pending")
+                                    .apply()
                                 phase = Phase.PENDING
-                                status = "✅ 申请已通过！点下方按钮去登录 (ID: ${r.applicationId.take(10)})"
+                                status = "实例已创建，请在浏览器中登录MiClaw账号"
+                                // ★ 每3秒轮询服务器检测登录状态，最长1小时
+                                scope.launch {
+                                    var elapsed = 0
+                                    while (elapsed < 3600 && phase == Phase.PENDING) {
+                                        kotlinx.coroutines.delay(3000); elapsed += 3
+                                        try {
+                                            val s = com.mbclaw.root.agent.MiclawBridge.status(settings.serverUrl, applicationId)
+                                            if (s.ready) {
+                                                com.mbclaw.root.agent.MiclawBridge.applyToSettings(settings, settings.serverUrl, s.userToken, s.model)
+                                                status = "🎉 登录成功！消耗${s.tokensUsed} tokens · 节省¥${s.savedYuan} · 运行${s.uptimeMinutes}分"
+                                                phase = Phase.READY
+                                                ctx.getSharedPreferences("mbclaw_bridge", 0).edit().putString("bridge_status", "ready").apply()
+                                                break
+                                            } else if (s.reason.contains("超时") || s.reason.contains("不存在")) {
+                                                phase = Phase.FAILED; status = "⏰ ${s.reason}"; break
+                                            }
+                                            if (elapsed % 15 == 0) status = "等待登录中... (${elapsed}s)"
+                                        } catch (_: Exception) {}
+                                    }
+                                    if (phase == Phase.PENDING) { phase = Phase.FAILED; status = "⏰ 1小时超时，实例已销毁"
+                                        ctx.getSharedPreferences("mbclaw_bridge", 0).edit().putString("bridge_status", "failed").apply() }
+                                }
                             } else {
                                 phase = Phase.FAILED
                                 status = "❌ 申请失败：${r.message}"
@@ -456,9 +531,11 @@ fun MiclawBridgeSheet(
                 ) { Text(if (phase == Phase.APPLYING) "申请中..." else "📝 申请白嫖") }
                 Phase.PENDING -> Button(
                     onClick = {
-                        // 用内置浏览器打开登录页
+                        // 打开服务器返回的登录URL（我们自定义的免密页面）
+                        val base = settings.serverUrl.ifBlank { "http://47.83.2.188" }
+                        val url = if (loginUrl.startsWith("/")) "$base$loginUrl" else loginUrl.ifBlank { "http://47.83.2.188/bridge/miclaw/login/$applicationId" }
                         val i = android.content.Intent(ctx, com.mbclaw.root.ui.BrowserActivity::class.java).apply {
-                            putExtra("url", "http://47.83.2.188:8765")
+                            putExtra("url", url)
                             addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                         }
                         ctx.startActivity(i)
@@ -471,6 +548,7 @@ fun MiclawBridgeSheet(
                                     com.mbclaw.root.agent.MiclawBridge.applyToSettings(settings, settings.serverUrl, s.userToken, s.model)
                                     phase = Phase.READY
                                     status = "✅ 已自动配好！${if (s.isStub) "(服务器是 stub 模式)" else ""}"
+                                    ctx.getSharedPreferences("mbclaw_bridge", 0).edit().putString("bridge_status", "ready").apply()
                                     return@launch
                                 }
                             }
@@ -480,7 +558,59 @@ fun MiclawBridgeSheet(
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("🚀 打开登录页") }
-                Phase.READY -> Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("✅ 关闭") }
+                Phase.READY -> Column {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = {
+                            scope.launch {
+                                val realId = ctx.getSharedPreferences("mbclaw_bridge", 0).getString("app_id", applicationId) ?: applicationId
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    com.mbclaw.root.agent.MiclawBridge.stopProxy(settings.serverUrl, realId)
+                                }
+                                status = "代理已暂停，点击重新启动"
+                                phase = Phase.STOPPED
+                                ctx.getSharedPreferences("mbclaw_bridge", 0).edit().putString("bridge_status", "stopped").apply()
+                            }
+                        }, modifier = Modifier.weight(1f)) { Text("■ 终止运行") }
+                        Button(onClick = {
+                            scope.launch {
+                                val realId = ctx.getSharedPreferences("mbclaw_bridge", 0).getString("app_id", applicationId) ?: applicationId
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    com.mbclaw.root.agent.MiclawBridge.deleteProxy(settings.serverUrl, realId)
+                                }
+                                settings.providerId = ""; settings.apiKey = ""; settings.apiBaseUrl = ""; settings.modelName = ""
+                                ctx.getSharedPreferences("mbclaw_bridge", 0).edit().clear().apply()
+                                status = "已删除，可重新申请"
+                                phase = Phase.INTRO
+                            }
+                        }, modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("🗑 删除配置") }
+                    }
+                }
+                Phase.STOPPED -> Column {
+                    Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFFFEF3C7), modifier = Modifier.fillMaxWidth()) {
+                        Text("● 实例已停止", modifier = Modifier.padding(12.dp), color = Color(0xFF92400E), style = MaterialTheme.typography.labelMedium)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = {
+                            phase = Phase.APPLYING
+                            status = "正在重新启动..."
+                        }, modifier = Modifier.weight(1f)) { Text("▶ 重新启动") }
+                        Button(onClick = {
+                            scope.launch {
+                                val realId = ctx.getSharedPreferences("mbclaw_bridge", 0).getString("app_id", applicationId) ?: applicationId
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    com.mbclaw.root.agent.MiclawBridge.deleteProxy(settings.serverUrl, realId)
+                                }
+                                settings.providerId = ""; settings.apiKey = ""; settings.apiBaseUrl = ""; settings.modelName = ""
+                                ctx.getSharedPreferences("mbclaw_bridge", 0).edit().clear().apply()
+                                status = "已删除，可重新申请"
+                                phase = Phase.INTRO
+                            }
+                        }, modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("删除实例") }
+                    }
+                }
                 Phase.FAILED -> Button(onClick = { phase = Phase.INTRO; status = "重新申请" }, modifier = Modifier.fillMaxWidth()) { Text("🔄 重试") }
                 Phase.BLOCKED -> Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("已封禁") }
@@ -490,4 +620,4 @@ fun MiclawBridgeSheet(
     }
 }
 
-private enum class Phase { INTRO, APPLYING, PENDING, READY, FAILED, BLOCKED }
+private enum class Phase { INTRO, APPLYING, PENDING, READY, STOPPED, FAILED, BLOCKED }

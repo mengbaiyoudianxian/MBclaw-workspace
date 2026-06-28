@@ -5,17 +5,18 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.getValue
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import com.mbclaw.nonroot.ui.MBclawMainScreen
 import com.mbclaw.nonroot.ui.theme.MBclawTheme
 
 /**
- * MBclaw Root 主 Activity
- *
- * 保留 70% MiClaw 原有 UI 结构 + 替换 AI 后端为 MBclaw
- * 语音唤醒 → MBclaw 而非小爱同学
+ * MBclaw Lite — 非Root版本
+ * 此版本作者投入精力 0.01%，基本没啥可以玩的
  */
 class MainActivity : ComponentActivity() {
 
@@ -23,10 +24,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // AgentService 由 BootReceiver 或用户手动启动
-
         setContent {
-            // 读取用户主题偏好 (light/dark/system) 并响应即时切换
             com.mbclaw.nonroot.ui.theme.ThemePreference.ensureInit(this)
             val mode by com.mbclaw.nonroot.ui.theme.ThemePreference.currentMode!!
             val isDark = when (mode) {
@@ -38,9 +36,30 @@ class MainActivity : ComponentActivity() {
                     ui == android.content.res.Configuration.UI_MODE_NIGHT_YES
                 }
             }
+
+            // 启动弹窗: 此版本作者投入精力0.01%
+            val prefs = getSharedPreferences("mbclaw_lite", MODE_PRIVATE)
+            var showDisclaimer by remember { mutableStateOf(!prefs.getBoolean("disclaimer_accepted", false)) }
+
             MBclawTheme(darkTheme = isDark) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     MBclawMainScreen()
+                }
+
+                if (showDisclaimer) {
+                    AlertDialog(
+                        onDismissRequest = {},
+                        title = { Text("MBclaw Lite") },
+                        text = { Text("此版本作者投入精力 0.01%，基本没啥可以玩的。\n\n建议下载完整 Root 版本体验全部功能。") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                prefs.edit().putBoolean("disclaimer_accepted", true).apply()
+                                showDisclaimer = false
+                            }) {
+                                Text("我知道了")
+                            }
+                        }
+                    )
                 }
             }
         }

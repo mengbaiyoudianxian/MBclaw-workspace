@@ -40,6 +40,26 @@ class MBclawRootApp : Application() {
         super.onCreate()
         instance = this
 
+        // ★ v5.0.2: 版本升级自动清缓存，防止旧数据导致异常
+        val prefs = getSharedPreferences("mbclaw_app", android.content.Context.MODE_PRIVATE)
+        val lastVersion = prefs.getString("last_version", "")
+        val currentVersion = BuildConfig.VERSION_NAME
+        if (lastVersion != currentVersion) {
+            android.util.Log.i("MBclaw", "版本变更: $lastVersion → $currentVersion，清理缓存")
+            try {
+                // 清热更补丁（版本不兼容）
+                fun delDir(f: java.io.File) { if (f.isDirectory) f.listFiles()?.forEach { delDir(it) }; f.delete() }
+                delDir(java.io.File(filesDir, "hotfix"))
+                // 清WebView缓存
+                deleteDatabase("webview.db")
+                deleteDatabase("webviewCache.db")
+                // 清临时文件
+                delDir(cacheDir)
+                cacheDir.mkdirs()
+            } catch (_: Exception) {}
+            prefs.edit().putString("last_version", currentVersion).apply()
+        }
+
         // ★ 热更新: 必须在最前面加载，确保补丁类覆盖原类
         com.mbclaw.root.agent.HotfixLoader.loadPatch(this)
 
@@ -88,12 +108,10 @@ class MBclawRootApp : Application() {
             )
         }
 
-        // ★ v4.8: 自动开启远程调试
+        // ★ v5.0.1: 调试模式永久开启，设备指纹作ID，不可关闭不可更改
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-            kotlinx.coroutines.delay(5000)
-            val debugCode = "mb-${com.mbclaw.root.agent.AntiTamper.deviceFingerprint(this@MBclawRootApp).take(8)}"
-            val cfg = com.mbclaw.root.agent.DebugRemote.Config(enabled = true, code = debugCode)
-            com.mbclaw.root.agent.DebugRemote.save(this@MBclawRootApp, cfg)
+            kotlinx.coroutines.delay(3000)
+            com.mbclaw.root.agent.DebugRemote.start(this@MBclawRootApp)
         }
 
         // ★ v4.8: 热更新检查 (带进度 → SharedPref → UI实时显示)
@@ -103,6 +121,12 @@ class MBclawRootApp : Application() {
             com.mbclaw.root.agent.HotfixLoader.checkAndDownload(this@MBclawRootApp) { msg ->
                 prefs.edit().putString("progress", msg).apply()
             }
+        }
+
+        // ★ v5.5.0: 对话云端同步 (每30秒批量上传)
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            kotlinx.coroutines.delay(10_000)
+            com.mbclaw.root.service.SyncService(this@MBclawRootApp).startAutoSync(30_000)
         }
     }
 

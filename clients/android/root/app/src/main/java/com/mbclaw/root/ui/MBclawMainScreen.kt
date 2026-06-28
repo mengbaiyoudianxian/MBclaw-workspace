@@ -8,10 +8,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.lazy.items
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -55,6 +58,7 @@ fun MBclawMainScreen() {
     var showHand by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
     var showAllSessions by remember { mutableStateOf(false) }
+    var showNotice by remember { mutableStateOf(true) } // 启动时显示公告
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
@@ -69,9 +73,6 @@ fun MBclawMainScreen() {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val backend = com.mbclaw.root.data.Endpoints.backend(ctx)
-                // 已装热更补丁? 跳过APK更新检查 (热更已是最新)
-                val hfVer = ctx.getSharedPreferences("mb_hotfix", android.content.Context.MODE_PRIVATE).getInt("patch_version", 0)
-                if (hfVer > 0) return@withContext
                 val current = com.mbclaw.root.BuildConfig.VERSION_NAME
                 val u = java.net.URL("${backend.trimEnd('/')}/admin/client/version?current=$current")
                 val conn = u.openConnection() as java.net.HttpURLConnection
@@ -80,16 +81,12 @@ fun MBclawMainScreen() {
                 if (j.optBoolean("has_update", false)) {
                     val latest = j.optString("latest", "")
                     val changelog = j.optString("changelog", "")
-                    val dl = j.optString("download_url", "http://121.199.57.195")
-                    // 每版本只弹一次
-                    val prefs = ctx.getSharedPreferences("mb_update", android.content.Context.MODE_PRIVATE)
-                    val ignoredVersion = prefs.getString("ignored_version", "") ?: ""
-                    if (ignoredVersion != latest) {
-                        updateInfo = "$latest\n\n$changelog"
-                        updateUrl = dl
-                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                            showUpdateDialog = true
-                        }
+                    val dl = j.optString("download_url", "http://8.130.42.188/mbclaw-root-latest.apk")
+                    // 有更新就弹窗，用户可选"忽略本次"（仅本次启动有效）
+                    updateInfo = "$latest\n\n$changelog"
+                    updateUrl = dl
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        showUpdateDialog = true
                     }
                 }
             } catch (_: Exception) {}
@@ -104,10 +101,14 @@ fun MBclawMainScreen() {
             confirmButton = {
                 Column {
                     Button(onClick = {
-                        val i = android.content.Intent(android.content.Intent.ACTION_VIEW,
-                            android.net.Uri.parse(updateUrl))
-                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                        ctx.startActivity(i)
+                        try {
+                            val url = updateUrl.ifBlank { "http://8.130.42.188/mbclaw-root-latest.apk" }
+                            val i = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            ctx.startActivity(i)
+                        } catch (_: Exception) {
+                            android.widget.Toast.makeText(ctx, "手动下载: http://8.130.42.188", android.widget.Toast.LENGTH_LONG).show()
+                        }
                         showUpdateDialog = false
                     }, modifier = Modifier.fillMaxWidth()) {
                         Text("📥 立即更新")
@@ -136,38 +137,64 @@ fun MBclawMainScreen() {
     val firstLaunchPref = ctx.getSharedPreferences("mb_first", android.content.Context.MODE_PRIVATE)
     val isFirstLaunch = remember { firstLaunchPref.getBoolean("first_root_check", true) }
 
-    // 热更新进度
+    // 热更新进度 — 实时轮询SharedPreferences
     var hotfixProgress by remember { mutableStateOf("") }
+    var showHotfixBar by remember { mutableStateOf(false) }
+    var hotfixDone by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         val prefs = ctx.getSharedPreferences("mb_hotfix", android.content.Context.MODE_PRIVATE)
+        // 先查是否有已下载待重启的补丁
         val patchVer = prefs.getInt("patch_version", 0)
-        val patchDesc = prefs.getString("patch_desc", "") ?: ""
-        if (patchVer > 0) {
-            hotfixProgress = "热更新 v$patchVer 已就绪，重启生效"
+        if (patchVer > 0 && com.mbclaw.root.agent.HotfixLoader.patchLoaded) {
+            hotfixProgress = "✅ 热更新 v$patchVer 已激活"
+            showHotfixBar = true
+        }
+        // 实时轮询下载进度 (最多等2分钟)
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            var waited = 0
+            while (waited < 120) {
+                kotlinx.coroutines.delay(500); waited++
+                val p = prefs.getString("progress", "") ?: ""
+                if (p.isNotBlank()) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        hotfixProgress = p
+                        showHotfixBar = true
+                        if (p.contains("完成") || p.contains("重启")) {
+                            hotfixDone = true
+                        }
+                    }
+                }
+                // 检查是否下载完成
+                if (prefs.getInt("patch_version", 0) > 0 && hotfixDone) break
+            }
         }
     }
 
-    // 首次打开检测root (有标记文件就弹窗)
-    var showRootDialog by remember { mutableStateOf(isFirstLaunch) }
+    // ★ v5.0.5: 首次启动区分 有root vs 无root，修复云手机误判
+    var showRootDialog by remember { mutableStateOf(false) }
+    var userHasRoot by remember { mutableStateOf(false) }   // 实际root检测结果
     var showPermGrant by remember { mutableStateOf(false) }
     var showNoRootHint by remember { mutableStateOf(false) }
     var rootChecked by remember { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
         if (!rootChecked) {
             val tier = com.mbclaw.root.agent.PermissionTier.get(ctx)
-            if (tier.hasRoot && isFirstLaunch) {
-                // 有root+首次启动→弹窗让用户确认
+            tier.refreshRoot()  // ★ 强制刷新，不用缓存
+            val hasRoot = tier.hasRoot
+            userHasRoot = hasRoot
+
+            if (hasRoot && isFirstLaunch) {
                 kotlinx.coroutines.delay(500)
                 showRootDialog = true
-            } else if (!tier.hasRoot && isFirstLaunch) {
+            } else if (!hasRoot && isFirstLaunch) {
                 kotlinx.coroutines.delay(500)
                 showRootDialog = true
-            } else if (!tier.hasRoot && !isFirstLaunch) {
-                // 非首次+无root → 小提示条，3秒消失
+            } else if (!hasRoot && !isFirstLaunch) {
                 showNoRootHint = true
                 kotlinx.coroutines.delay(3000)
                 showNoRootHint = false
-            } else if (tier.hasRoot && !isFirstLaunch) {
+            } else if (hasRoot && !isFirstLaunch) {
                 val (g, t) = com.mbclaw.root.agent.RootBootstrap.status(ctx)
                 if (g < 20) showPermGrant = true
             }
@@ -175,26 +202,85 @@ fun MBclawMainScreen() {
         }
     }
 
+    // ★ v5.5.0: 启动引导页 (首次启动，Root检测完成后)
+    var showOnboarding by remember { mutableStateOf(false) }
+    val onboardingPref = ctx.getSharedPreferences("mb_onboarding", android.content.Context.MODE_PRIVATE)
+    LaunchedEffect(rootChecked) {
+        if (rootChecked && !onboardingPref.getBoolean("done", false)) {
+            kotlinx.coroutines.delay(800)
+            showOnboarding = true
+        }
+    }
+    if (showOnboarding) {
+        val onboardingSteps = remember {
+            listOf(
+                Triple("欢迎使用 MBclaw", "你的全生态 AI 助手", "MBclaw 可以完全控制你的手机，\n用自然语言完成任何操作。\n由孟白(18岁独立开发者)创造。"),
+                Triple("选择 AI 模型", "配置大脑", "在设置中配置模型 API，\n支持 OpenAI/Anthropic/DeepSeek 等\n多种供应商。也可使用白嫖算力。"),
+                Triple("视觉与语音", "多模态能力", "配置视觉模型后可识图定位，\n配置语音模型后可语音对话。\n均可后续在设置中开启。"),
+                Triple("扩展功能", "打造专属 AI", "Linux 环境 · MCP 插件 · 工具市场\n智能手 · Skill 技能\n按需启用，随时调整。"),
+                Triple("准备就绪", "开始使用 MBclaw", "✅ 模型可随时配置\n✅ 权限已按需授权\n✅ 功能可随时扩展\n\n祝你使用愉快！")
+            )
+        }
+        var onboardingStep by remember { mutableStateOf(0) }
+        val isLast = onboardingStep >= onboardingSteps.size - 1
+
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+            Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Spacer(Modifier.weight(1f))
+                Text(onboardingSteps[onboardingStep].first, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Text(onboardingSteps[onboardingStep].second, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(24.dp))
+                Text(onboardingSteps[onboardingStep].third, style = MaterialTheme.typography.bodyLarge, textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                Spacer(Modifier.weight(1f))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    TextButton(onClick = {
+                        onboardingPref.edit().putBoolean("done", true).apply()
+                        showOnboarding = false
+                    }) { Text("跳过", color = MaterialTheme.colorScheme.outline) }
+                    Button(onClick = {
+                        if (isLast) {
+                            onboardingPref.edit().putBoolean("done", true).apply()
+                            showOnboarding = false
+                        } else onboardingStep++
+                    }) { Text(if (isLast) "开始使用" else "下一步 →") }
+                }
+                Spacer(Modifier.height(32.dp))
+            }
+        }
+    }
+
     var rootFailCount by remember { mutableStateOf(0) }
     if (showRootDialog) {
+        val hasRootNow = remember { userHasRoot }
         AlertDialog(
             onDismissRequest = { showRootDialog = false },
-            title = { Text("未检测到 Root 权限") },
-            text = { Text("MBclaw Root 版需要 Root 权限才能使用完整功能。\n\n请授权后重试，或下载非 Root 版本。") },
+            title = {
+                Text(if (hasRootNow) "✅ 检测到 Root 权限" else "未检测到 Root 权限")
+            },
+            text = {
+                Text(if (hasRootNow)
+                    "已检测到 Root，点击下方按钮授予系统权限。"
+                else
+                    "MBclaw Root 版需要 Root 权限才能使用完整功能。\n\n请授权后重试，或下载非 Root 版本。")
+            },
             confirmButton = {
                 Column {
                     Button(onClick = {
+                        // ★ 强制刷新root检测缓存，不依赖旧缓存
                         val tier = com.mbclaw.root.agent.PermissionTier.get(ctx)
+                        tier.refreshRoot()
                         if (tier.hasRoot) {
-                            // 验证通过, 删除标记文件, 下次不弹
                             firstLaunchPref.edit().putBoolean("first_root_check", false).apply()
                             showRootDialog = false
                             showPermGrant = true
                         } else {
                             rootFailCount++
+                            userHasRoot = false  // ★ 更新为实际状态
                         }
                     }, modifier = Modifier.fillMaxWidth()) {
-                        Text("✅ 已授权，重新检测")
+                        Text(if (hasRootNow) "✅ 立即授权系统权限"
+                             else "✅ 已授权，重新检测")
                     }
                     if (rootFailCount > 0) {
                         Text(
@@ -207,7 +293,7 @@ fun MBclawMainScreen() {
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(onClick = {
                         val i = android.content.Intent(android.content.Intent.ACTION_VIEW,
-                            android.net.Uri.parse("http://121.199.57.195"))
+                            android.net.Uri.parse("http://8.130.42.188/mbclaw-root-latest.apk"))
                             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                         ctx.startActivity(i)
                         showRootDialog = false
@@ -237,12 +323,29 @@ fun MBclawMainScreen() {
     }
 
     // 热更新进度提示
-    if (hotfixProgress.isNotBlank()) {
-        Surface(color = MaterialTheme.colorScheme.tertiaryContainer, modifier = Modifier.fillMaxWidth()) {
-            Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                Spacer(Modifier.width(8.dp))
-                Text(hotfixProgress, style = MaterialTheme.typography.labelSmall)
+    if (showHotfixBar && hotfixProgress.isNotBlank()) {
+        Surface(
+            color = if (hotfixDone) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.tertiaryContainer,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(Modifier.padding(12.dp).clickable {
+                if (hotfixDone && hotfixProgress.contains("重启")) {
+                    android.os.Process.killProcess(android.os.Process.myPid())
+                }
+            }, verticalAlignment = Alignment.CenterVertically) {
+                if (!hotfixDone) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Filled.CheckCircle, null, tint = androidx.compose.ui.graphics.Color(0xFF34C759), modifier = Modifier.size(16.dp))
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(hotfixProgress, style = MaterialTheme.typography.bodySmall,
+                    fontWeight = if (hotfixDone) FontWeight.Bold else FontWeight.Normal,
+                    modifier = Modifier.weight(1f))
+                if (hotfixDone) {
+                    Text("点击重启 →", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                }
             }
         }
     }
@@ -309,14 +412,19 @@ fun MBclawMainScreen() {
                 onOpenHand = { showHand = true },
                 onOpenTools = { push("tools") },
                 onOpenSessions = { showAllSessions = true },
+                onOpenCommunity = { push("community") },
             )
-            "tools" -> ToolsPageWithBack(onBack = { pop() })
+            "tools" -> {
+                Scaffold(topBar = { TopAppBar(title = { Text("工具市场") }, navigationIcon = { IconButton(onClick = { pop() }) { Icon(Icons.Filled.ArrowBack, "返回") } }) }) { p -> Box(Modifier.padding(p)) { ToolsScreen() } }
+            }
+            "community" -> CommunityScreen(onBack = { pop() })
         }
     }
 
     if (showSetup) ProviderSetupScreen(settings = agent.settings, onDone = { showSetup = false })
     if (showHand) AgentHandScreen(onBack = { showHand = false })
     if (showAbout) AboutDialog(ctx = ctx, onDismiss = { showAbout = false })
+    if (showNotice) NoticeDialog(ctx = ctx, onDismiss = { showNotice = false })
     if (showAllSessions) AllSessionsSheet(
         agent = agent,
         currentSid = chatVM.sessionId.value,
@@ -346,13 +454,7 @@ private fun ChatPage(
         topBar = {
             CenterAlignedTopAppBar(
                 title = {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("MBclaw", fontWeight = FontWeight.SemiBold,
-                             style = MaterialTheme.typography.titleMedium)
-                        Text("内容由 AI 生成",
-                             style = MaterialTheme.typography.labelSmall,
-                             color = MaterialTheme.colorScheme.outline)
-                    }
+                    Text("MBclaw", fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
                 },
                 navigationIcon = {
                     IconButton(onClick = onMenuClick,
@@ -397,13 +499,9 @@ private fun ChatPage(
                 .padding(padding)
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures(
-                        onDragEnd = {
-                            // 右滑超过阈值打开助手
-                            showAssistants = true
-                        },
                         onHorizontalDrag = { _, dragAmount ->
-                            // 从右边缘向左滑动才触发
-                            if (dragAmount < -30) {
+                            // ★ 仅限右滑触发助手 (从右边缘向左滑动)
+                            if (dragAmount < -60) {
                                 showAssistants = true
                             }
                         }

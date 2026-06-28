@@ -1,6 +1,6 @@
 package com.mbclaw.root.hermes
 
-import com.mbclaw.root.api.DirectApiClient
+import com.mbclaw.root.api.UnifiedApiClient
 import com.mbclaw.root.api.ChatMessage as ApiMsg
 import com.mbclaw.root.data.LocalDB
 import com.mbclaw.root.data.UserSettings
@@ -20,6 +20,7 @@ class RealEngine(
     private fun baseUrl(): String = settings.apiBaseUrl.ifBlank {
         ProviderCatalog.find(settings.providerId)?.baseUrl ?: ""
     }
+    private fun protocol(): String = ProviderCatalog.find(settings.providerId)?.protocol ?: "openai"
 
     // ═══════════════════════════════════════════
     // 🌙 梦想整合 — LLM 驱动
@@ -38,7 +39,7 @@ class RealEngine(
 
         return try {
             withContext(Dispatchers.IO) {
-                DirectApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, prompt, settings.utopiaEnabled)
+                UnifiedApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, prompt, protocol(), settings.utopiaEnabled)
             }
         } catch (e: Exception) { "🌙 梦想引擎异常: ${e.message}" }
     }
@@ -58,7 +59,7 @@ class RealEngine(
                     ApiMsg("system", "你是Key2评审引擎。严格按4维度评分:\n代码质量(0-10): \n逻辑正确性(0-10): \n安全性(0-10): \n完整性(0-10): \n总分(0-40): \n问题列表:\n改进建议:\n\n用中文，严格格式。"),
                     ApiMsg("user", "评审第${round}轮:\n---\n${currentContent.take(3000)}\n---")
                 )
-                val review = withContext(Dispatchers.IO) { DirectApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, reviewPrompt, settings.utopiaEnabled) }
+                val review = withContext(Dispatchers.IO) { UnifiedApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, reviewPrompt, protocol(), settings.utopiaEnabled) }
                 results.add("[第${round}轮]\n$review")
 
                 // 解析总分
@@ -69,7 +70,7 @@ class RealEngine(
                         ApiMsg("system", "你是Key1执行引擎。根据Key2的评审意见修改内容。"),
                         ApiMsg("user", "原始内容:\n${currentContent.take(2000)}\n\n评审意见:\n$review\n\n请修改后重新输出完整内容。")
                     )
-                    currentContent = withContext(Dispatchers.IO) { DirectApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, revisePrompt, settings.utopiaEnabled) }
+                    currentContent = withContext(Dispatchers.IO) { UnifiedApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, revisePrompt, protocol(), settings.utopiaEnabled) }
                     results.add("[Key1修改稿]\n${currentContent.take(300)}...")
                 }
             }
@@ -92,7 +93,7 @@ class RealEngine(
 
         return try {
             withContext(Dispatchers.IO) {
-                DirectApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, prompt, settings.utopiaEnabled)
+                UnifiedApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, prompt, protocol(), settings.utopiaEnabled)
             }
         } catch (e: Exception) { "💥 碰撞引擎异常: ${e.message}" }
     }
@@ -114,7 +115,7 @@ class RealEngine(
 
         return try {
             withContext(Dispatchers.IO) {
-                DirectApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, prompt, settings.utopiaEnabled)
+                UnifiedApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, prompt, protocol(), settings.utopiaEnabled)
             }
         } catch (e: Exception) { "📝 总结异常: ${e.message}" }
     }
@@ -136,7 +137,7 @@ class RealEngine(
 
         return try {
             val resp = withContext(Dispatchers.IO) {
-                DirectApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, prompt, settings.utopiaEnabled)
+                UnifiedApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, prompt, protocol(), settings.utopiaEnabled)
             }
             resp.split(Regex("[,，、\\s]+")).filter { it.length in 2..15 }.take(15)
         } catch (e: Exception) { emptyList() }
@@ -156,7 +157,7 @@ class RealEngine(
 
         return try {
             val resp = withContext(Dispatchers.IO) {
-                DirectApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, prompt, settings.utopiaEnabled)
+                UnifiedApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, prompt, protocol(), settings.utopiaEnabled)
             }
             val parts = resp.split("|")
             if (parts.size >= 2) {
@@ -192,7 +193,7 @@ class RealEngine(
             ApiMsg("user", "对话:\n${text.take(2000)}\n\n请输出反思结果。")
         )
         return try {
-            val resp = withContext(Dispatchers.IO) { DirectApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, prompt, settings.utopiaEnabled) }
+            val resp = withContext(Dispatchers.IO) { UnifiedApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, prompt, protocol(), settings.utopiaEnabled) }
             val lines = resp.split("\n").filter { it.isNotBlank() }
             var f = emptyList<String>(); var p = emptyList<String>(); var s = emptyList<String>(); var r = emptyList<String>(); var c = emptyList<String>()
             for (line in lines) {
@@ -218,7 +219,7 @@ class RealEngine(
 
         return try {
             withContext(Dispatchers.IO) {
-                DirectApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, prompt, settings.utopiaEnabled)
+                UnifiedApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, prompt, protocol(), settings.utopiaEnabled)
             }
         } catch (e: Exception) { "📊 画像引擎异常: ${e.message}" }
     }
@@ -237,7 +238,7 @@ class RealEngine(
 
         return try {
             withContext(Dispatchers.IO) {
-                DirectApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, prompt, settings.utopiaEnabled)
+                UnifiedApiClient.chat(baseUrl(), settings.apiKey, settings.modelName, prompt, protocol(), settings.utopiaEnabled)
             }
         } catch (e: Exception) { availableTools.first() }
     }

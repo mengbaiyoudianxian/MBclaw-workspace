@@ -24,7 +24,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import java.io.File
 import java.io.FileOutputStream
 
@@ -102,59 +105,33 @@ fun ChatScreen(vm: ChatViewModel) {
             items(vm.messages.reversed()) { msg -> ChatBubble(msg) }
         }
 
-        // 底部输入栏 — 仿 MiClaw
+        // 底部输入栏 — ChatGPT 风格紧凑
         Surface(
             color = MaterialTheme.colorScheme.background,
-            modifier = Modifier
-                .imePadding()                       // ★ 输入法弹出时跟着上浮
-                .navigationBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.imePadding().navigationBarsPadding(),
         ) {
             Surface(
-                color = MaterialTheme.colorScheme.surface,
-                shape = RoundedCornerShape(28.dp),
-                shadowElevation = 1.dp,
+                color = if (MaterialTheme.colorScheme.background == Color(0xFFFFFFFF)) Color(0xFFF3F4F6) else Color(0xFF1F1F1F),
+                shape = RoundedCornerShape(26.dp),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             ) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    // 左 + 上传文件
-                    IconButton(
-                        onClick = {
-                            filePicker.launch(arrayOf(
-                                "image/*",           // 图片
-                                "application/*",     // APK/压缩包/文档
-                                "video/*",           // 视频
-                                "audio/*",           // 音频
-                                "text/*",            // 文本
-                                "*/*",               // 所有类型
-                            ))
-                        },
-                        modifier = Modifier.size(44.dp),
-                    ) {
-                        Icon(Icons.Filled.AttachFile, "上传文件", tint = MaterialTheme.colorScheme.onSurface,
-                             modifier = Modifier.size(24.dp))
+                    // 左 + 上传
+                    IconButton(onClick = { filePicker.launch(arrayOf("image/*","application/*","video/*","audio/*","text/*","*/*")) }, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Filled.AttachFile, "上传", tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f), modifier = Modifier.size(22.dp))
                     }
-                    // 中 输入框 (无边框)
+                    // 中 输入
                     BasicInputField(
-                        value = vm.inputText.value,
-                        onValueChange = { vm.inputText.value = it },
+                        value = vm.inputText.value, onValueChange = { vm.inputText.value = it },
                         enabled = !vm.isThinking.value,
-                        placeholder = if (vm.isThinking.value) "Agent 运行中，可点右侧停止"
-                                      else "发消息或按住说话",
-                        onSend = { vm.send() },
-                        modifier = Modifier.weight(1f),
+                        placeholder = if (vm.isThinking.value) "Agent 运行中" else "发消息",
+                        onSend = { vm.send() }, modifier = Modifier.weight(1f),
                     )
-                    // 右 麦克风 / 发送 / 终止
+                    // 右
                     when {
-                        vm.isThinking.value -> {
-                            IconButton(
-                                onClick = { vm.cancel() },
-                                modifier = Modifier.size(44.dp),
-                            ) {
-                                Icon(Icons.Filled.Stop, "终止",
-                                     tint = MaterialTheme.colorScheme.error,
-                                     modifier = Modifier.size(24.dp))
-                            }
+                        vm.isThinking.value -> IconButton(onClick = { vm.cancel() }, modifier = Modifier.size(40.dp)) {
+                            Icon(Icons.Filled.Stop, "终止", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(24.dp))
                         }
                         vm.inputText.value.isNotBlank() -> {
                             FilledIconButton(
@@ -265,14 +242,31 @@ private fun ChatBubble(msg: ChatMsg) {
                 bottomEnd = if (isUser) 4.dp else 18.dp,
             ),
         ) {
-            Text(
-                msg.content,
-                modifier = Modifier.padding(14.dp, 10.dp),
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (msg.isError) MaterialTheme.colorScheme.onErrorContainer
-                        else if (isUser) MaterialTheme.colorScheme.onSecondaryContainer
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Column(Modifier.padding(12.dp, 8.dp)) {
+                val parts = msg.content.split("```")
+                parts.forEachIndexed { i, part ->
+                    if (i % 2 == 1) {
+                        // 代码块
+                        val code = part.replaceAfter("\n", "").let { if (it.isBlank()) part else part.substringAfter("\n") }
+                        val lang = part.substringBefore("\n").trim().ifBlank { null }
+                        Surface(
+                            color = if (MaterialTheme.colorScheme.background == Color(0xFFFFFFFF)) Color(0xFF1A1A1A) else Color(0xFF0A0A0A),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        ) {
+                            Column {
+                                if (lang != null) Text(lang, Modifier.padding(start = 12.dp, top = 8.dp), fontSize = 11.sp, color = Color(0xFF8B949E))
+                                Text(code.trim(), Modifier.padding(12.dp).fillMaxWidth(), fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 13.sp, color = Color(0xFFE6EDF3))
+                            }
+                        }
+                    } else if (part.isNotBlank()) {
+                        Text(part, style = MaterialTheme.typography.bodyLarge,
+                            color = if (msg.isError) MaterialTheme.colorScheme.onErrorContainer
+                                    else if (isUser) MaterialTheme.colorScheme.onSecondaryContainer
+                                    else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
         }
         // AI 消息下方有操作按钮（仿 MiClaw）
         if (!isUser) {

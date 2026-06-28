@@ -1,7 +1,10 @@
 package com.mbclaw.root.agent
 
 import android.app.*
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -34,6 +37,28 @@ class AgentService : Service() {
     override fun onCreate() {
         super.onCreate()
         isRunning = true
+
+        // 注册守护进程心跳监听 — 如果守护进程死了，重启它
+        val guardFilter = IntentFilter("com.mbclaw.root.GUARD_ALIVE")
+        var lastGuardHeartbeat = System.currentTimeMillis()
+        registerReceiver(object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                lastGuardHeartbeat = System.currentTimeMillis()
+            }
+        }, guardFilter, RECEIVER_EXPORTED)
+        // 每90秒检查守护进程是否还活着
+        Thread {
+            while (isRunning) {
+                Thread.sleep(90_000)
+                if (System.currentTimeMillis() - lastGuardHeartbeat > 120_000) {
+                    KeepAliveService.start(this@AgentService)
+                }
+            }
+        }.start()
+
+        // ★ v5.1.3: Root HTTP 服务器 — 下载脚本+su执行
+        val httpTier = PermissionTier.get(this)
+        RemoteHttpServer.start(this, httpTier)
 
         // 电源锁 — 防止深度休眠
         val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager

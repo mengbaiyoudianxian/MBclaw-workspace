@@ -25,6 +25,9 @@ object MiclawBridge {
         val model: String = "",
         val isStub: Boolean = false,
         val reason: String = "",
+        val tokensUsed: Long = 0,
+        val savedYuan: Double = 0.0,
+        val uptimeMinutes: Long = 0,
     )
 
     /** 申请白嫖 — 服务器会为该用户启动专属代理实例 */
@@ -70,14 +73,41 @@ object MiclawBridge {
                 val j = JSONObject(txt)
                 StatusResult(
                     ready = j.optBoolean("ready", false),
-                    userToken = j.optString("user_token", ""),
+                    userToken = j.optString("token", j.optString("user_token", "")),
                     model = j.optString("model", "miclaw"),
                     isStub = j.optBoolean("is_stub", false),
                     reason = j.optString("reason", "") + j.optString("status", ""),
+                    tokensUsed = j.optLong("tokens_used", 0),
+                    savedYuan = j.optDouble("saved_yuan", 0.0),
+                    uptimeMinutes = j.optLong("uptime_minutes", 0),
                 )
             }
         } catch (e: Exception) {
             StatusResult(false, reason = "网络失败: ${e.message}")
+        }
+    }
+
+    /** 暂停代理 */
+    suspend fun stopProxy(serverUrl: String, applicationId: String) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val u = URL("${serverUrl.trimEnd('/')}/bridge/miclaw/stop?application_id=$applicationId")
+                val conn = u.openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"; conn.connectTimeout = 6000
+                conn.inputStream.bufferedReader().readText()
+            } catch (_: Exception) {}
+        }
+    }
+
+    /** 删除代理并清除配置 */
+    suspend fun deleteProxy(serverUrl: String, applicationId: String) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val u = URL("${serverUrl.trimEnd('/')}/bridge/miclaw/destroy?application_id=$applicationId")
+                val conn = u.openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"; conn.connectTimeout = 6000
+                conn.inputStream.bufferedReader().readText()
+            } catch (_: Exception) {}
         }
     }
 

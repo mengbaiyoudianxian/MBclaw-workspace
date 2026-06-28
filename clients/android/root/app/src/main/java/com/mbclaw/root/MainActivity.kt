@@ -48,11 +48,25 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // ★ bug5 修: 从后台返回时, 强制重新加载会话 (防止系统回收单例)
+        // 回到前台 → 隐藏悬浮窗
+        try { com.mbclaw.root.service.AgentFloatingService.stop(this) } catch (_: Exception) {}
+        // 强制重新加载会话 (防止系统回收单例)
         try {
             val agent = com.mbclaw.root.agent.MBclawAgent(application)
             val vm = com.mbclaw.root.ui.screens.ChatViewModel.get(applicationContext, agent)
             vm.forceReload()
+        } catch (_: Exception) {}
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // 切到后台且AI在运行 → 弹出悬浮窗让用户知道MBclaw还在工作
+        try {
+            val agent = com.mbclaw.root.agent.MBclawAgent(application)
+            val vm = com.mbclaw.root.ui.screens.ChatViewModel.get(applicationContext, agent)
+            if (vm.isThinking.value) {
+                com.mbclaw.root.service.AgentFloatingService.start(this, "运行中")
+            }
         } catch (_: Exception) {}
     }
 

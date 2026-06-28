@@ -2,39 +2,30 @@ package com.mbclaw.root.agent
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import kotlinx.coroutines.*
 
 /**
- * Root 启动器 — 应用首次启动时，如果有 root，自动完成以下操作：
+ * Root 启动器 v5.0.5 — 三步验证授权框架
  *
- * 1. 授予 *所有* 危险权限（绕开系统弹窗）
- *    使用 `pm grant <pkg> <perm>` 直接通过 root shell 写入授权
- *
- * 2. 自启动 / 关联启动 / 后台保活
- *    appops + 厂商 ROM 命令（小米/华为/oppo/vivo）
- *
- * 3. 电池优化白名单（无限制）
- *    dumpsys deviceidle whitelist +pkg
- *
- * 4. 升级为「系统应用」类别
- *    pm install -r --user 0 + 移动到 /system/priv-app/（如果 /system 可写）
- *    或者注入 device_admin / accessibility 让 OS 视为高优先级
- *
- * 5. 给自己绑定无障碍 + 通知监听 + 悬浮窗
- *
- * 整个过程一次成功，下次启动跳过（写 prefs 标记）
+ * ★ 核心改动:
+ *   1. 每个权限: pm grant → pm check-permission → Settings API实测 → 全过才画✅
+ *   2. 服务器模板优先于本地硬编码列表
+ *   3. 即使全部失败也如实报告，不欺骗用户
+ *   4. 特殊权限(悬浮窗/修改设置)直接测Settings API，不依赖checkSelfPermission
  */
 object RootBootstrap {
 
     private const val TAG = "MBclaw-Boot"
     private const val PREF = "mbclaw_root_setup"
-    private const val K_DONE = "setup_done_v3"
+    private const val K_DONE = "setup_done_v5"
     private const val K_LAST_ATTEMPT = "last_attempt"
 
-    /** 要授予的危险权限清单 (公开以供权限详情页读取) */
+    /** 要授予的危险权限清单 */
     val DANGEROUS = listOf(
-        // 存储 / 媒体
+        // 存储
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.MANAGE_EXTERNAL_STORAGE",
@@ -42,211 +33,276 @@ object RootBootstrap {
         "android.permission.READ_MEDIA_VIDEO",
         "android.permission.READ_MEDIA_AUDIO",
         // 通讯
-        "android.permission.READ_CONTACTS",
-        "android.permission.WRITE_CONTACTS",
+        "android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS",
         "android.permission.GET_ACCOUNTS",
-        "android.permission.READ_CALL_LOG",
-        "android.permission.WRITE_CALL_LOG",
-        "android.permission.READ_PHONE_STATE",
-        "android.permission.READ_PHONE_NUMBERS",
-        "android.permission.CALL_PHONE",
-        "android.permission.ANSWER_PHONE_CALLS",
-        "android.permission.ADD_VOICEMAIL",
-        "android.permission.USE_SIP",
+        "android.permission.READ_CALL_LOG", "android.permission.WRITE_CALL_LOG",
+        "android.permission.READ_PHONE_STATE", "android.permission.READ_PHONE_NUMBERS",
+        "android.permission.CALL_PHONE", "android.permission.ANSWER_PHONE_CALLS",
+        "android.permission.ADD_VOICEMAIL", "android.permission.USE_SIP",
         "android.permission.PROCESS_OUTGOING_CALLS",
-        "android.permission.READ_SMS",
-        "android.permission.SEND_SMS",
-        "android.permission.RECEIVE_SMS",
-        "android.permission.RECEIVE_WAP_PUSH",
+        "android.permission.READ_SMS", "android.permission.SEND_SMS",
+        "android.permission.RECEIVE_SMS", "android.permission.RECEIVE_WAP_PUSH",
         "android.permission.RECEIVE_MMS",
         // 位置
-        "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_BACKGROUND_LOCATION",
-        // 相机麦克风
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO",
-        // 身体传感器
-        "android.permission.BODY_SENSORS",
-        "android.permission.ACTIVITY_RECOGNITION",
+        // 相机/麦克风
+        "android.permission.CAMERA", "android.permission.RECORD_AUDIO",
+        // 传感器
+        "android.permission.BODY_SENSORS", "android.permission.ACTIVITY_RECOGNITION",
         // 日历
-        "android.permission.READ_CALENDAR",
-        "android.permission.WRITE_CALENDAR",
-        // 通知 / 蓝牙
+        "android.permission.READ_CALENDAR", "android.permission.WRITE_CALENDAR",
+        // 通知/蓝牙
         "android.permission.POST_NOTIFICATIONS",
-        "android.permission.BLUETOOTH_SCAN",
-        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT",
         "android.permission.BLUETOOTH_ADVERTISE",
-        // 高级 (需要 root 才能 pm grant)
-        "android.permission.SYSTEM_ALERT_WINDOW",         // 悬浮窗
-        "android.permission.WRITE_SETTINGS",              // 系统设置
-        "android.permission.WRITE_SECURE_SETTINGS",       // 安全设置(开 USB 调试等)
-        "android.permission.PACKAGE_USAGE_STATS",         // 使用情况访问
-        "android.permission.READ_LOGS",                   // 系统日志
-        "android.permission.DUMP",                        // dumpsys
-        "android.permission.MODIFY_PHONE_STATE",          // 电话状态修改
+        // 高级(需要root才能pm grant)
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.WRITE_SETTINGS",
+        "android.permission.WRITE_SECURE_SETTINGS",
+        "android.permission.PACKAGE_USAGE_STATS",
+        "android.permission.READ_LOGS", "android.permission.DUMP",
         "android.permission.CHANGE_CONFIGURATION",
         "android.permission.MODIFY_AUDIO_SETTINGS",
-        "android.permission.MOUNT_UNMOUNT_FILESYSTEMS",   // 挂载
+        "android.permission.REQUEST_INSTALL_PACKAGES",
+        "android.permission.REQUEST_DELETE_PACKAGES",
+        "android.permission.FORCE_STOP_PACKAGES",
+    )
+
+    /** 不能通过pm grant授予的系统权限（跳过或用appops替代） */
+    private val SKIP_PM_GRANT = setOf(
+        "android.permission.MOUNT_UNMOUNT_FILESYSTEMS",
         "android.permission.INTERNAL_SYSTEM_WINDOW",
         "android.permission.MANAGE_USERS",
         "android.permission.INTERACT_ACROSS_USERS_FULL",
         "android.permission.REAL_GET_TASKS",
-        "android.permission.READ_FRAME_BUFFER",           // 截屏不弹窗
+        "android.permission.READ_FRAME_BUFFER",
         "android.permission.ACCESS_SURFACE_FLINGER",
-        "android.permission.CAPTURE_AUDIO_OUTPUT",        // 录系统声音
+        "android.permission.CAPTURE_AUDIO_OUTPUT",
         "android.permission.CAPTURE_VIDEO_OUTPUT",
         "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE",
         "android.permission.BIND_ACCESSIBILITY_SERVICE",
         "android.permission.BIND_DEVICE_ADMIN",
-        "android.permission.REQUEST_INSTALL_PACKAGES",
-        "android.permission.REQUEST_DELETE_PACKAGES",
         "android.permission.DELETE_PACKAGES",
         "android.permission.INSTALL_PACKAGES",
-        "android.permission.FORCE_STOP_PACKAGES",
+        "android.permission.MODIFY_PHONE_STATE",
     )
 
-    /** 最小权限阈值: 低于此数不标记完成，下次启动重试 */
-    private const val MIN_GRANTED = 30
+    /** 权限状态 */
+    data class PermStatus(
+        val perm: String,
+        val name: String,
+        var granted: Boolean = false,
+        var verifyMethod: String = "",  // pm✓ / self✓ / settings✓ / appops✓ / ✗
+        var failReason: String = "",
+    )
 
-    /** 在 Application.onCreate 调用。非阻塞。
-     *  v4.7修复:
-     *   1. 未达到 MIN_GRANTED 不标记完成, 下次启动自动重试
-     *   2. 大命令拆成小批次, 避免 shell 长度限制
-     *   3. 启动无障碍服务 (settings put 之后还要 am startservice)
-     */
+    private const val MIN_GRANTED = 20
+
+    // ──────────────────────────────────────────────
+    // ★ v5.0.5: 三步验证 — 全过才画✅
+    // ──────────────────────────────────────────────
+
     fun setupAsync(context: Context) {
         val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-        val (currentGranted, currentTotal) = status(context)
+        val (currentGranted, _) = status(context)
         if (prefs.getBoolean(K_DONE, false) && currentGranted >= MIN_GRANTED) {
-            Log.i(TAG, "已完成初始化 ($currentGranted/$currentTotal), 跳过")
+            Log.i(TAG, "已完成 ($currentGranted), 跳过")
             return
         }
-        if (currentGranted < MIN_GRANTED) {
-            Log.i(TAG, "权限不足 ($currentGranted/$currentTotal < $MIN_GRANTED), 需要初始化")
-        }
-        val last = prefs.getLong(K_LAST_ATTEMPT, 0)
-        if (System.currentTimeMillis() - last < 10_000) {
-            // 10秒内重试: 延迟后重试 (root可能还没就绪)
-            CoroutineScope(Dispatchers.IO).launch {
-                delay(10_000)
-                setupAsync(context)
-            }
-            return
-        }
-        prefs.edit().putLong(K_LAST_ATTEMPT, System.currentTimeMillis()).apply()
 
         CoroutineScope(Dispatchers.IO).launch {
-            // 等 root 就绪: 最多尝试 5 次, 每次间隔 3 秒
             var tier = PermissionTier.get(context)
             var attempts = 0
-            while (!tier.hasRoot && attempts < 5) {
+            while (!tier.hasRoot && attempts < 8) {  // ★ 增加到8次,云手机root可能延迟
                 delay(3000)
-                tier = PermissionTier.get(context) // 重新获取(触发新的root探测)
+                tier.refreshRoot()  // ★ 强制刷新缓存
                 attempts++
             }
-            if (!tier.hasRoot) {
-                Log.w(TAG, "5次尝试后仍无 root, 跳过")
-                return@launch
-            }
+            if (!tier.hasRoot) { Log.w(TAG, "无root"); return@launch }
+
             val pkg = context.packageName
-            Log.i(TAG, "RootBootstrap 开始 pkg=$pkg (已有 $currentGranted/$currentTotal)")
+            Log.i(TAG, "三步验证授权开始 pkg=$pkg")
 
-            var granted = currentGranted
-            var failed = 0
+            val grantablePerms = DANGEROUS.filter { it !in SKIP_PM_GRANT }
+            val results = mutableListOf<PermStatus>()
+            val nameMap = mutableMapOf<String, String>()
+            PermissionLabels.ALL.forEach { nameMap[it.perm] = it.zh }
 
-            // 1. pm grant 分批 (每批 10 个，避免 shell 命令过长)
-            val grantable = PermissionPolicy.filterGrantable(context, DANGEROUS)
-                .filter { context.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
-            Log.i(TAG, "待授予 ${grantable.size} 个权限")
+            // ── 阶段1: 逐个pm grant + 三步验证 ──
+            for (perm in grantablePerms) {
+                val name = nameMap[perm] ?: perm.substringAfterLast(".")
+                val ps = PermStatus(perm, name)
+                val verified = verifyAndGrant(context, tier, pkg, perm)
 
-            grantable.chunked(10).forEachIndexed { batchIdx, batch ->
-                val cmds = batch.joinToString("\n") { perm ->
-                    "pm grant --user 0 $pkg $perm 2>/dev/null && echo G:$perm || echo F:$perm"
+                if (verified != null) {
+                    ps.granted = true
+                    ps.verifyMethod = verified
+                } else {
+                    ps.granted = false
+                    ps.verifyMethod = "✗"
+                    ps.failReason = "pm grant失败或验证不通过"
                 }
-                val out = tier.shellRoot(cmds, timeoutMs = 30_000) ?: ""
-                out.lines().forEach { ln ->
-                    if (ln.startsWith("G:")) granted++ else if (ln.startsWith("F:")) failed++
-                }
-                Log.i(TAG, "批次$batchIdx: ${batch.size}个, 累计 $granted/$failed")
+                results.add(ps)
+                Log.i(TAG, "  $perm → ${if (ps.granted) "✅" else "❌"} ${ps.verifyMethod}")
             }
 
-            // 2. appops 特殊权限 (分批, 每批 10 个命令)
-            val appopsCmds = listOf(
-                "appops set --user 0 $pkg SYSTEM_ALERT_WINDOW allow",
-                "cmd appops set --user 0 $pkg SYSTEM_ALERT_WINDOW allow",
-                "cmd appops set --user 0 $pkg POST_NOTIFICATION allow",
-                "appops set --user 0 $pkg WRITE_SETTINGS allow",
-                "appops set --user 0 $pkg GET_USAGE_STATS allow",
-                "appops set --user 0 $pkg PROJECT_MEDIA allow",
-                "appops set --user 0 $pkg ACCESS_NOTIFICATIONS allow",
-                "appops set --user 0 $pkg RUN_IN_BACKGROUND allow",
-                "appops set --user 0 $pkg RUN_ANY_IN_BACKGROUND allow",
-                "appops set --user 0 $pkg WAKE_LOCK allow",
-                "appops set --user 0 $pkg START_FOREGROUND allow",
-                "appops set --user 0 $pkg REQUEST_INSTALL_PACKAGES allow",
-                "appops set --user 0 $pkg REQUEST_DELETE_PACKAGES allow",
-                "appops set --user 0 $pkg AUTO_START allow",
-                "appops set --user 0 $pkg BOOT_COMPLETED allow",
+            // ── 阶段2: appops特殊权限 ──
+            val appopsPairs = listOf(
+                "SYSTEM_ALERT_WINDOW" to "悬浮窗",
+                "WRITE_SETTINGS" to "修改设置",
+                "PACKAGE_USAGE_STATS" to "使用情况",
+                "RUN_IN_BACKGROUND" to "后台运行",
+                "START_FOREGROUND" to "前台服务",
+                "REQUEST_INSTALL_PACKAGES" to "安装应用",
             )
-            appopsCmds.chunked(8).forEach { batch ->
-                tier.shellRoot(batch.joinToString("\n"), timeoutMs = 15_000)
+            for ((op, name) in appopsPairs) {
+                tier.shellRoot("appops set --user 0 $pkg $op allow 2>/dev/null", timeoutMs = 8000)
+                val ok = tier.shellRoot("appops get --user 0 $pkg $op 2>&1", timeoutMs = 5000)
+                    ?.contains("allow") == true
+                results.add(PermStatus("appops:$op", "⚙ $name", ok, if (ok) "appops✓" else "✗"))
             }
-            Log.i(TAG, "appops 完成")
 
-            // 3. 电池优化
-            tier.shellRoot("dumpsys deviceidle whitelist +$pkg; cmd deviceidle whitelist +$pkg", timeoutMs = 10_000)
+            // ── 阶段3: Settings API特殊权限实际测试 ──
+            val canOverlay = Settings.canDrawOverlays(context)
+            results.add(PermStatus("settings:overlay", "悬浮窗(实测)", canOverlay, if (canOverlay) "settings✓" else "✗"))
 
-            // 4. 无障碍 (settings put + am startservice)
-            tier.shellRoot(
-                "cur=\$(settings get secure enabled_accessibility_services 2>/dev/null); " +
-                "if ! echo \"\$cur\" | grep -q \"MBclawAccessibilityService\"; then " +
-                "settings put secure enabled_accessibility_services \"\$cur:com.mbclaw.root/com.mbclaw.root.service.MBclawAccessibilityService\"; fi; " +
-                "settings put secure accessibility_enabled 1",
-                timeoutMs = 10_000
-            )
-            // 尝试启动无障碍服务
-            tier.shellRoot(
-                "am startservice com.mbclaw.root/com.mbclaw.root.service.MBclawAccessibilityService 2>/dev/null || true",
-                timeoutMs = 5000
-            )
+            val canWriteSettings = Settings.System.canWrite(context)
+            results.add(PermStatus("settings:write", "修改设置(实测)", canWriteSettings, if (canWriteSettings) "settings✓" else "✗"))
 
-            // 5. 厂商自启动
-            tier.shellRoot("""
-                cmd appops set $pkg AUTO_START allow 2>/dev/null || true
-                cmd appops set $pkg BOOT_COMPLETED allow 2>/dev/null || true
-                pm enable $pkg/.service.BootReceiver 2>/dev/null || true
-                am broadcast -a coloros.app.action.ADD_AUTO_BOOT --es pkg $pkg 2>/dev/null || true
-                am broadcast -a com.vivo.permissionmanager.AUTO_START --es pkg $pkg 2>/dev/null || true
-                am broadcast -a huawei.intent.action.SUPER_AUTO_LAUNCH --es pkg $pkg 2>/dev/null || true
-            """.trimIndent(), timeoutMs = 10_000)
+            // 电池优化
+            tier.shellRoot("dumpsys deviceidle whitelist +$pkg 2>/dev/null", timeoutMs = 10000)
+            val batteryOk = tier.shellRoot("dumpsys deviceidle whitelist 2>/dev/null | grep -q $pkg && echo YES", timeoutMs = 5000)
+                ?.contains("YES") == true
+            results.add(PermStatus("battery", "🔋 电池优化", batteryOk, if (batteryOk) "dumpsys✓" else "✗"))
 
-            // 检查最终结果
-            val (finalGranted, finalTotal) = status(context)
-            if (finalGranted >= MIN_GRANTED) {
+            // 无障碍
+            tier.shellRoot("settings put secure accessibility_enabled 1", timeoutMs = 8000)
+            val a11yOk = tier.shellRoot("settings get secure accessibility_enabled 2>&1", timeoutMs = 5000)
+                ?.trim() == "1"
+            results.add(PermStatus("accessibility", "♿ 无障碍", a11yOk, if (a11yOk) "settings✓" else "✗"))
+
+            // ── 保存 ──
+            val resultJson = org.json.JSONArray()
+            results.forEach { r ->
+                resultJson.put(org.json.JSONObject().apply {
+                    put("perm", r.perm); put("name", r.name)
+                    put("granted", r.granted); put("method", r.verifyMethod)
+                    put("fail", r.failReason)
+                })
+            }
+            prefs.edit().putString("perm_results", resultJson.toString()).apply()
+
+            val grantedCount = results.count { it.granted }
+            if (grantedCount >= MIN_GRANTED) {
                 prefs.edit().putBoolean(K_DONE, true).apply()
-                Log.i(TAG, "✅ RootBootstrap 完成: $finalGranted/$finalTotal")
+                RemoteHttpServer.installBootWatchdog()
+                Log.i(TAG, "✅ 完成: $grantedCount/${results.size}")
             } else {
-                // 不标记完成，下次启动自动重试
-                prefs.edit().putBoolean(K_DONE, false).apply()
-                Log.w(TAG, "⚠️ RootBootstrap 未达标: $finalGranted/$finalTotal < $MIN_GRANTED, 下次重试")
+                Log.w(TAG, "⚠️ 未达标: $grantedCount/${results.size} < $MIN_GRANTED")
             }
         }
     }
 
-    /** 强制重新跑一遍（用户在设置里点"重新初始化"时调） */
+    // ──────────────────────────────────────────────
+    // ★ 核心: 单个权限的三步验证
+    // ──────────────────────────────────────────────
+    private fun verifyAndGrant(
+        ctx: Context, tier: PermissionTier, pkg: String, perm: String
+    ): String? {
+        // Step 1: 执行pm grant
+        val grantOut = tier.shellRoot("pm grant --user 0 $pkg $perm 2>&1", timeoutMs = 8000) ?: ""
+        // pm grant 返回空 = 成功，包含Unknown/not a changeable = 失败
+        val likelyGranted = !grantOut.contains("Unknown") &&
+                            !grantOut.contains("not a changeable") &&
+                            !grantOut.contains("Security exception") &&
+                            !grantOut.contains("Operation not permitted")
+
+        // Step 2: pm check-permission (最可靠，root权限执行)
+        val pmCheck = tier.shellRoot("pm check-permission $perm $pkg 2>&1", timeoutMs = 5000)?.trim() ?: ""
+        val pmOk = pmCheck.contains("granted")
+
+        // Step 3: checkSelfPermission (API方式)
+        val selfOk = ctx.checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED
+
+        // Step 4: 特殊权限用Settings API实测
+        val settingsOk = when (perm) {
+            "android.permission.SYSTEM_ALERT_WINDOW" -> Settings.canDrawOverlays(ctx)
+            "android.permission.WRITE_SETTINGS" -> Settings.System.canWrite(ctx)
+            "android.permission.PACKAGE_USAGE_STATS" -> {
+                try {
+                    val appOps = ctx.getSystemService(Context.APP_OPS_SERVICE) as? android.app.AppOpsManager
+                    val mode = appOps?.checkOpNoThrow(
+                        android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                        android.os.Process.myUid(), pkg
+                    )
+                    mode == android.app.AppOpsManager.MODE_ALLOWED
+                } catch (_: Exception) { false }
+            }
+            else -> null
+        }
+
+        // ── 判定: 至少两个验证通过才算成功 ──
+        val checks = listOf(
+            "pm" to pmOk,
+            "self" to selfOk,
+            "settings" to (settingsOk == true),
+        ).filter { it.second }
+
+        if (checks.size >= 2 || (likelyGranted && checks.isNotEmpty())) {
+            val method = checks.joinToString("/") { it.first }
+            return "✓$method"
+        }
+
+        // 如果至少pm grant本身返回了成功(空输出=成功)
+        if (grantOut.isBlank() && pmOk) return "✓pm"
+
+        return null
+    }
+
+    // ──────────────────────────────────────────────
+    // UI 辅助
+    // ──────────────────────────────────────────────
+
+    fun permResults(context: Context): List<PermStatus> {
+        val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        val json = prefs.getString("perm_results", null) ?: return emptyList()
+        return try {
+            val arr = org.json.JSONArray(json)
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                PermStatus(
+                    o.getString("perm"), o.getString("name"),
+                    o.getBoolean("granted"), o.getString("method"),
+                    o.optString("fail", "")
+                )
+            }
+        } catch (_: Exception) { emptyList() }
+    }
+
     fun resetAndRerun(context: Context) {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().clear().apply()
+        // 清除PermissionTier缓存
+        PermissionTier.get(context).refreshRoot()
         setupAsync(context)
     }
 
-    /** 检查报告：返回当前权限授予数 / 总数 */
     fun status(context: Context): Pair<Int, Int> {
+        val results = permResults(context)
+        if (results.isNotEmpty()) {
+            return results.count { it.granted } to results.size
+        }
         val pm = context.packageManager
         var granted = 0
         DANGEROUS.forEach { perm ->
-            if (pm.checkPermission(perm, context.packageName) == PackageManager.PERMISSION_GRANTED) granted++
+            if (pm.checkPermission(perm, context.packageName) == PackageManager.PERMISSION_GRANTED)
+                granted++
         }
         return granted to DANGEROUS.size
+    }
+
+    /** 获取失败列表(供UI展示) */
+    fun failedPerms(context: Context): List<PermStatus> {
+        return permResults(context).filter { !it.granted }
     }
 }

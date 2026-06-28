@@ -1,7 +1,7 @@
 package com.mbclaw.root.agent
 
 import android.app.Application
-import com.mbclaw.root.api.DirectApiClient
+import com.mbclaw.root.api.UnifiedApiClient
 import com.mbclaw.root.api.ChatMessage
 import com.mbclaw.root.data.LocalDB
 import com.mbclaw.root.data.UserSettings
@@ -48,8 +48,10 @@ class MBclawAgent(private val app: Application) {
                 if (memoryCtx.isNotBlank()) apiMessages.add(ChatMessage("system", "以下是记忆库相关信息，请自然引用：$memoryCtx"))
                 apiMessages.add(ChatMessage("user", message))
 
-                val baseUrl = settings.apiBaseUrl.ifBlank { ProviderCatalog.find(settings.providerId)?.baseUrl ?: "" }
-                val reply = DirectApiClient.chat(baseUrl, settings.apiKey, settings.modelName, apiMessages)
+                val provider = ProviderCatalog.find(settings.providerId)
+                val baseUrl = settings.apiBaseUrl.ifBlank { provider?.baseUrl ?: "" }
+                val protocol = provider?.protocol ?: "openai"
+                val reply = UnifiedApiClient.chat(baseUrl, settings.apiKey, settings.modelName, apiMessages, protocol)
 
                 db.saveMessage(currentSessionId, "assistant", reply)
                 db.saveMemory("last_chat", message, "chat")

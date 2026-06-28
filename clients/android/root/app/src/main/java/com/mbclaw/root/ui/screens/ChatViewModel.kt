@@ -181,7 +181,7 @@ class ChatViewModel private constructor(private val ctx: Context, val agent: MBc
         isThinking.value = true
         agentStatus.value = "🤖 启动中…"
 
-        com.mbclaw.root.service.AgentFloatingService.start(ctx, "运行")
+        // ★ v5.0.2: 悬浮窗只在切后台时弹出，不在AI开始时弹出
         registerCancelReceiver()
 
         scope.launch {

@@ -12,8 +12,8 @@ android {
         applicationId = "com.mbclaw.nonroot"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "4.6-lite"
+        versionCode = 50
+        versionName = "5.0.0.0-lite"
     }
 
     buildTypes {
