@@ -29,6 +29,16 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.*
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.ui.graphics.graphicsLayer
 import com.mbclaw.root.BuildConfig
 import com.mbclaw.root.agent.MBclawAgent
 import com.mbclaw.root.ui.screens.*
@@ -41,7 +51,7 @@ import com.mbclaw.root.ui.screens.*
  * 抽屉: 聊天列表 + 添加助手 + 设置入口
  * 设置: 二级页（账号 / 模型 / 工具 / 智能手 / Token / 隐私 / 清除 / 版本）
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun MBclawMainScreen() {
     val ctx = LocalContext.current
@@ -202,7 +212,7 @@ fun MBclawMainScreen() {
         }
     }
 
-    // ★ v5.5.0: 启动引导页 (首次启动，Root检测完成后)
+    // ★ v5.5.0: 启动引导页 — 流畅 HorizontalPager + 动画指示器
     var showOnboarding by remember { mutableStateOf(false) }
     val onboardingPref = ctx.getSharedPreferences("mb_onboarding", android.content.Context.MODE_PRIVATE)
     LaunchedEffect(rootChecked) {
@@ -214,38 +224,155 @@ fun MBclawMainScreen() {
     if (showOnboarding) {
         val onboardingSteps = remember {
             listOf(
-                Triple("欢迎使用 MBclaw", "你的全生态 AI 助手", "MBclaw 可以完全控制你的手机，\n用自然语言完成任何操作。\n由孟白(18岁独立开发者)创造。"),
-                Triple("选择 AI 模型", "配置大脑", "在设置中配置模型 API，\n支持 OpenAI/Anthropic/DeepSeek 等\n多种供应商。也可使用白嫖算力。"),
-                Triple("视觉与语音", "多模态能力", "配置视觉模型后可识图定位，\n配置语音模型后可语音对话。\n均可后续在设置中开启。"),
-                Triple("扩展功能", "打造专属 AI", "Linux 环境 · MCP 插件 · 工具市场\n智能手 · Skill 技能\n按需启用，随时调整。"),
-                Triple("准备就绪", "开始使用 MBclaw", "✅ 模型可随时配置\n✅ 权限已按需授权\n✅ 功能可随时扩展\n\n祝你使用愉快！")
+                // 第1页: 欢迎 + 核心能力
+                listOf("🤖", "欢迎使用 MBclaw", "你的手机AI智能体",
+                       "⚠️ 必备：AI模型 → 决定了「大脑」的智商\n" +
+                       "💡 推荐：视觉识图 → 让AI看懂你的屏幕\n" +
+                       "💡 推荐：语音对话 → 动口不动手\n" +
+                       "📦 可选：扩展插件 → 按需开启更多能力\n\n" +
+                       "MBclaw 用自然语言操控手机——\n点击、输入、开关WiFi、管理应用、读写文件。\n由孟白(18岁独立开发者)创造。"),
+                // 第2页: AI模型 — 必备核心
+                listOf("🧠", "AI 模型配置", "⚠️ 必备 — 决定一切能力上限",
+                       "没有模型，MBclaw 就是一个空壳。\n\n" +
+                       "方式一：自带 Key\n" +
+                       "  • 支持 OpenAI / Anthropic / DeepSeek / 阿里云等\n" +
+                       "  • 推荐 mimo-v2.5-pro（小米 MIMO）\n\n" +
+                       "方式二：白嫖算力\n" +
+                       "  • 服务器自动创建 MiClaw 代理实例\n" +
+                       "  • 免费使用，自动配置，无需填 Key\n" +
+                       "  • 每次使用约为您节省 ¥0.03~0.30"),
+                // 第3页: 视觉+语音 — 推荐开启
+                listOf("👁", "视觉与语音", "💡 推荐 — 让AI看懂、听懂",
+                       "视觉识图（推荐开启）：\n" +
+                       "  • AI 截屏分析屏幕内容，精准定位按钮/文本\n" +
+                       "  • 不开 = AI 是「盲人」，只能文字交互\n" +
+                       "  • 预设支持：豆包 SeedVision / 智谱 AutoGLM\n\n" +
+                       "语音 TTS/ASR（按需开启）：\n" +
+                       "  • TTS：AI 朗读回复给你听\n" +
+                       "  • ASR：你说 → AI 听 → 自动转文字\n" +
+                       "  • 不开 = 纯文本对话，功能完全正常"),
+                // 第4页: 扩展能力 — 可选增值
+                listOf("🔌", "扩展能力", "📦 可选 — 按需打造专属AI",
+                       "Linux 环境：\n" +
+                       "  • 手机里跑完整 Alpine Linux（~200MB）\n" +
+                       "  • AI 可执行编译、脚本、文件处理等高级操作\n\n" +
+                       "MCP 插件 / Skill 技能 / 工具市场：\n" +
+                       "  • 连接外部工具和API，无限扩展AI 能力边界\n" +
+                       "  • 本地/云端技能按需安装\n\n" +
+                       "以上全部可选，基础对话功能不受任何影响。"),
+                // 第5页: 完成
+                listOf("✅", "准备就绪", "开始你的 MBclaw 之旅",
+                       "✅ 模型：可随时在设置中配置\n" +
+                       "✅ 权限：已按设备情况自动授权\n" +
+                       "✅ 扩展：随时按需启用\n\n" +
+                       "所有功能都可以在设置中调整。\n" +
+                       "跳过引导不会影响任何功能。\n\n" +
+                       "祝你使用愉快！")
             )
         }
-        var onboardingStep by remember { mutableStateOf(0) }
-        val isLast = onboardingStep >= onboardingSteps.size - 1
+        val pageCount = onboardingSteps.size
+        val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount) { pageCount }
+        val coroutineScope = rememberCoroutineScope()
+        val isLast = pagerState.currentPage >= pageCount - 1
 
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-            Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                Spacer(Modifier.weight(1f))
-                Text(onboardingSteps[onboardingStep].first, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(8.dp))
-                Text(onboardingSteps[onboardingStep].second, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.height(24.dp))
-                Text(onboardingSteps[onboardingStep].third, style = MaterialTheme.typography.bodyLarge, textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
-                Spacer(Modifier.weight(1f))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.fillMaxSize()) {
+                // 顶部跳过按钮
+                Row(Modifier.fillMaxWidth().padding(top = 48.dp, end = 16.dp), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = {
                         onboardingPref.edit().putBoolean("done", true).apply()
                         showOnboarding = false
-                    }) { Text("跳过", color = MaterialTheme.colorScheme.outline) }
-                    Button(onClick = {
-                        if (isLast) {
-                            onboardingPref.edit().putBoolean("done", true).apply()
-                            showOnboarding = false
-                        } else onboardingStep++
-                    }) { Text(if (isLast) "开始使用" else "下一步 →") }
+                    }) { Text("跳过", color = MaterialTheme.colorScheme.outline, fontSize = 14.sp) }
                 }
-                Spacer(Modifier.height(32.dp))
+
+                // 页面
+                androidx.compose.foundation.pager.HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.weight(1f),
+                ) { page ->
+                    val pageOffset = (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
+                    Box(
+                        Modifier.fillMaxSize().graphicsLayer {
+                            alpha = 1f - kotlin.math.abs(pageOffset).coerceIn(0f, 1f) * 0.6f
+                            scaleX = 1f - kotlin.math.abs(pageOffset).coerceIn(0f, 1f) * 0.08f
+                            scaleY = 1f - kotlin.math.abs(pageOffset).coerceIn(0f, 1f) * 0.08f
+                        }
+                    ) {
+                        AnimatedContent(
+                            targetState = page,
+                            transitionSpec = {
+                                val dir = if (targetState > initialState) 1 else -1
+                                (slideInHorizontally(animationSpec = tween(400, easing = FastOutSlowInEasing)) { w -> dir * w } + fadeIn(tween(300)))
+                                    .togetherWith(slideOutHorizontally(animationSpec = tween(400, easing = FastOutSlowInEasing)) { w -> -dir * w } + fadeOut(tween(200)))
+                            },
+                        ) { currentPage ->
+                            Column(
+                                Modifier.fillMaxSize().padding(horizontal = 28.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                            ) {
+                                Spacer(Modifier.weight(0.15f))
+                                // 图标 — 弹性缩放
+                                val iconScale by animateFloatAsState(
+                                    targetValue = 1f, animationSpec = spring(dampingRatio = 0.5f, stiffness = 300f)
+                                )
+                                Box(
+                                    Modifier.size(88.dp).graphicsLayer { scaleX = iconScale; scaleY = iconScale }
+                                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f), CircleShape),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(onboardingSteps[currentPage][0], fontSize = 40.sp)
+                                }
+                                Spacer(Modifier.height(24.dp))
+                                Text(onboardingSteps[currentPage][1], style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(6.dp))
+                                Text(onboardingSteps[currentPage][2], style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.height(16.dp))
+                                Text(onboardingSteps[currentPage][3], style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), lineHeight = 22.sp)
+                                Spacer(Modifier.weight(0.25f))
+                            }
+                        }
+                    }
+                }
+
+                // 底部指示器 + 按钮
+                Column(Modifier.padding(horizontal = 32.dp, vertical = 16.dp).navigationBarsPadding()) {
+                    // 圆点指示器 — 平滑颜色+大小过渡
+                    Row(Modifier.fillMaxWidth().padding(bottom = 24.dp), horizontalArrangement = Arrangement.Center) {
+                        repeat(pageCount) { idx ->
+                            val isSelected = idx == pagerState.currentPage
+                            val dotColor by animateColorAsState(
+                                targetValue = if (isSelected) MaterialTheme.colorScheme.primary
+                                              else MaterialTheme.colorScheme.outlineVariant,
+                                animationSpec = tween(300)
+                            )
+                            val dotSize by animateDpAsState(
+                                targetValue = if (isSelected) 10.dp else 8.dp,
+                                animationSpec = tween(300)
+                            )
+                            Box(
+                                Modifier.padding(horizontal = 5.dp).size(dotSize)
+                                    .background(dotColor, CircleShape),
+                            )
+                        }
+                    }
+                    // 按钮
+                    Button(
+                        onClick = {
+                            if (isLast) {
+                                onboardingPref.edit().putBoolean("done", true).apply()
+                                showOnboarding = false
+                            } else {
+                                coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        shape = RoundedCornerShape(14.dp),
+                    ) {
+                        Text(if (isLast) "开始使用" else "下一步", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    Spacer(Modifier.height(16.dp))
+                }
             }
         }
     }
@@ -500,8 +627,8 @@ private fun ChatPage(
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures(
                         onHorizontalDrag = { _, dragAmount ->
-                            // ★ 仅限右滑触发助手 (从右边缘向左滑动)
-                            if (dragAmount < -60) {
+                            // ★ v5.5.x: 仅限右滑触发 (从右边缘向左滑 ≥200px，防误触)
+                            if (dragAmount < -200) {
                                 showAssistants = true
                             }
                         }

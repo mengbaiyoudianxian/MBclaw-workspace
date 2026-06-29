@@ -1,19 +1,29 @@
 package com.mbclaw.root.agent
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * 工具注册表 — OpenAI function calling 格式
+ * 工具注册表 — 动态注册中心
  *
- * MBclaw 能执行的 31 个真实手机操作
- * 每个工具都有 name/description/parameters schema
+ * Builtin(内置31个) + Plugin/Skill/API/Runtime 动态注册
+ * StateFlow 驱动 UI 自动刷新
  */
+/** MBOS v3: ToolRegistry = CapabilityRegistry (统一能力注册中心)
+ *  保留旧名称兼容, 功能已完成 v3 升级: StateFlow + register/unregister + type + Provider */
 object ToolRegistry {
+    /** v3 别名, 新代码推荐使用 */
+    val CapabilityRegistry: ToolRegistry get() = this
 
-    data class ToolDef(val name: String, val description: String, val parameters: JSONObject)
+    data class ToolDef(val name: String, val description: String, val parameters: JSONObject,
+                       val source: String = "builtin",   // builtin/plugin/skill/api/runtime/cloud
+                       val type: String = "builtin")      // builtin/mcp/skill/api
 
-    val ALL: List<ToolDef> = listOf(
+    /** 内置工具 (静态) */
+    val BUILTIN: List<ToolDef> = listOf(
         // ═══ 设备控制 ═══
         ToolDef("toggle_wifi", "打开或关闭WiFi", JSONObject("""{"type":"object","properties":{"enable":{"type":"boolean","description":"true打开,false关闭"}},"required":["enable"]}""")),
         ToolDef("toggle_bluetooth", "打开或关闭蓝牙", JSONObject("""{"type":"object","properties":{"enable":{"type":"boolean"}},"required":["enable"]}""")),
@@ -176,5 +186,97 @@ object ToolRegistry {
         return arr
     }
 
+    // ── 动态注册 ─────────────────────────────────────────
+    private val _registered = MutableStateFlow<List<ToolDef>>(emptyList())
+    val tools: StateFlow<List<ToolDef>> = _registered
+
+    /** 所有工具: 内置 + 动态注册 */
+    val ALL: List<ToolDef> get() = BUILTIN + _registered.value
+
+    /** 注册一个工具 (插件/Skill/API/Runtime调用) */
+    fun register(tool: ToolDef) {
+        _registered.update { current ->
+            current.filter { it.name != tool.name } + tool
+        }
+    }
+
+    /** 取消注册 */
+    fun unregister(name: String) {
+        _registered.update { current -> current.filter { it.name != name } }
+    }
+
+    /** 批量注册 */
+    fun registerAll(tools: List<ToolDef>) {
+        _registered.update { current ->
+            val names = tools.map { it.name }.toSet()
+            current.filter { it.name !in names } + tools
+        }
+    }
+
     fun find(name: String): ToolDef? = ALL.find { it.name == name }
+
+    /** v6: 关键词搜索 */
+    fun search(query: String, limit: Int = 10): List<ToolDef> =
+        ALL.filter { it.name.contains(query, true) || it.description.contains(query, true) }.take(limit)
+
+    /** v6: 初始化 — 加载builtin + 从磁盘恢复已注册工具 */
+    fun initBuiltins(ctx: android.content.Context) {
+        if (_registered.value.isNotEmpty()) return  // 已初始化
+        // 从 CustomToolStore 恢复
+        val saved = com.mbclaw.root.agent.CustomToolStore.loadAll(ctx)
+        if (saved.isNotEmpty()) {
+            registerAll(saved.map {
+                ToolDef(it.name, it.description, org.json.JSONObject(it.parameters), it.source, "tool")
+            })
+        }
+    }
+}
+
+/** v6: Capability Provider 接口 — Builtin/Cloud/Import/Runtime */
+interface CapabilityProvider {
+    suspend fun load(ctx: android.content.Context): List<ToolRegistry.ToolDef>
+}
+
+object BuiltinProvider : CapabilityProvider {
+    override suspend fun load(ctx: android.content.Context) = ToolRegistry.BUILTIN
+}
+
+object CloudProvider : CapabilityProvider {
+    override suspend fun load(ctx: android.content.Context): List<ToolRegistry.ToolDef> {
+        try {
+            val backend = com.mbclaw.root.data.Endpoints.backend(ctx)
+            val u = java.net.URL("${backend.trimEnd('/')}/admin/client/mcp/list")
+            val conn = u.openConnection() as java.net.HttpURLConnection
+            conn.connectTimeout = 5000; conn.readTimeout = 5000
+            val j = org.json.JSONObject(conn.inputStream.bufferedReader().readText())
+            val arr = j.optJSONArray("plugins") ?: return emptyList()
+            return (0 until arr.length()).map { i ->
+                val p = arr.getJSONObject(i)
+                ToolRegistry.ToolDef(p.optString("name"), p.optString("desc", ""),
+                    org.json.JSONObject(p.optString("parameters", "{}")), "mcp", "mcp")
+            }
+        } catch (_: Exception) { return emptyList() }
+    }
+}
+
+object ImportProvider : CapabilityProvider {
+    override suspend fun load(ctx: android.content.Context): List<ToolRegistry.ToolDef> {
+        val result = mutableListOf<ToolRegistry.ToolDef>()
+        listOf("/sdcard/MBclaw/plugins", "/sdcard/MBclaw/skills").forEach { dir ->
+            java.io.File(dir).listFiles()?.filter { it.isDirectory }?.forEach { d ->
+                try {
+                    val manifest = java.io.File(d, "manifest.json")
+                    if (manifest.exists()) {
+                        val j = org.json.JSONObject(manifest.readText())
+                        result.add(ToolRegistry.ToolDef(
+                            j.optString("name", d.name), j.optString("description", ""),
+                            org.json.JSONObject(j.optString("parameters", "{}")),
+                            j.optString("type", "skill"), j.optString("type", "skill")
+                        ))
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+        return result
+    }
 }

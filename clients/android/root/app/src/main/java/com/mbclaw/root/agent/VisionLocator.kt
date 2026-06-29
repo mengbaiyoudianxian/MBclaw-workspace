@@ -285,6 +285,11 @@ object VisionLocator {
         val elem = Regex("""element\\s*[=:]\\s*\\[(\\d+)\\s*[,\uff0c]\\s*(\\d+)]""").find(actionText)
         val ex = elem?.groupValues?.get(1)?.toIntOrNull() ?: 500
         val ey = elem?.groupValues?.get(2)?.toIntOrNull() ?: 500
+
+        // ★ v5.5.x: 检测 (0,0) — VLM找不到目标时常见，视为定位失败
+        if (ex == 0 && ey == 0 && action in listOf("Tap", "Double Tap", "Long Press", "LongPress")) {
+            return LocateResult(false, errorReason = "视觉模型未找到目标 (返回坐标0,0)。请用更具体的位置描述重试，或先截屏确认当前界面。")
+        }
         val txt = Regex("""text\\s*[=:]\\s*["']([^"']+)""").find(actionText)?.groupValues?.getOrNull(1) ?: ""
         val swStart = Regex("""start\\s*[=:]\\s*\\[(\\d+)\\s*[,\uff0c]\\s*(\\d+)]""").find(actionText)
         val swEnd = Regex("""end\\s*[=:]\\s*\\[(\\d+)\\s*[,\uff0c]\\s*(\\d+)]""").find(actionText)

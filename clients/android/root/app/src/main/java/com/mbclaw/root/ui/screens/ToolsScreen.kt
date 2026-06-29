@@ -39,7 +39,9 @@ fun ToolsScreen() {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val settings = remember { com.mbclaw.root.data.UserSettings(ctx) }
     var selectedCat by remember { mutableStateOf("全部") }
-    val builtinTools = remember { ToolRegistry.ALL }
+    // ★ v6: 绑定CapabilityRegistry flow, 工具注册后自动刷新
+    val registeredTools by ToolRegistry.tools.collectAsState()
+    val builtinTools = ToolRegistry.BUILTIN
     var customTools by remember { mutableStateOf(com.mbclaw.root.agent.CustomToolStore.loadAll(ctx)) }
     var showAddSheet by remember { mutableStateOf(false) }
     var actionTool by remember { mutableStateOf<Pair<String, String>?>(null) }    // (name, source)
@@ -77,45 +79,7 @@ fun ToolsScreen() {
     }
     val current = cats.find { it.first == selectedCat }?.second ?: allTools
 
-    // ★ 插件/技能管理 (v5.5.0)
-    var selectedTab by remember { mutableStateOf("工具") }
-    var pluginFiles by remember { mutableStateOf(listOf<String>()) }
-    var skillFiles by remember { mutableStateOf(listOf<String>()) }
-    val pluginDir = java.io.File("/sdcard/MBclaw/plugins")
-    val skillDir = java.io.File("/sdcard/MBclaw/skills")
-    var importType by remember { mutableStateOf("plugin") }
-    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-            try {
-                val fileName = uri.lastPathSegment ?: "import_${System.currentTimeMillis()}"
-                val targetDir = if (importType == "plugin") java.io.File(pluginDir, fileName.replace(".mbplugin", "").replace(".zip", ""))
-                                else java.io.File(skillDir, fileName.replace(".mbskill", "").replace(".md", ""))
-                targetDir.mkdirs()
-                ctx.contentResolver.openInputStream(uri)?.use { input ->
-                    java.io.FileOutputStream(java.io.File(targetDir, fileName)).use { input.copyTo(it) }
-                }
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    if (importType == "plugin") pluginFiles = pluginDir.listFiles()?.map { it.name }?.toList() ?: emptyList()
-                    else skillFiles = skillDir.listFiles()?.map { it.name }?.toList() ?: emptyList()
-                }
-            } catch (_: Exception) {}
-        }
-    }
-
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        // ★ TabRow: 工具 / 插件 / 技能
-        TabRow(selectedTabIndex = listOf("工具","插件","技能").indexOf(selectedTab).coerceAtLeast(0)) {
-            listOf("工具", "插件", "技能").forEach { tab ->
-                Tab(selected = selectedTab == tab, onClick = {
-                    selectedTab = tab
-                    if (tab == "插件") { pluginDir.mkdirs(); pluginFiles = pluginDir.listFiles()?.map { it.name }?.toList() ?: emptyList() }
-                    if (tab == "技能") { skillDir.mkdirs(); skillFiles = skillDir.listFiles()?.map { it.name }?.toList() ?: emptyList() }
-                }, text = { Text(tab, fontSize = 13.sp) })
-            }
-        }
-        // 工具Tab — 原有内容
-        if (selectedTab == "工具") {
         // ─── 顶部统计 + 添加按钮 ───
         Surface(color = MaterialTheme.colorScheme.background) {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -230,30 +194,6 @@ fun ToolsScreen() {
             onChanged = { refresh++ },
         )
     }
-    } // end if (selectedTab == "工具")
-    // ★ 插件/技能 Tab (v5.5.0)
-    if (selectedTab == "插件") {
-        Column(Modifier.fillMaxSize().padding(16.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("已安装插件 (${pluginFiles.size})", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                Row { TextButton(onClick = { importType = "plugin"; filePicker.launch(arrayOf("*/*")) }) { Text("导入") }; TextButton(onClick = { scope.launch { pluginDir.mkdirs(); pluginFiles = pluginDir.listFiles()?.map { it.name }?.toList() ?: emptyList() } }) { Text("刷新") } }
-            }
-            Spacer(Modifier.height(8.dp))
-            if (pluginFiles.isEmpty()) Text("暂无插件 · 点击「导入」选择 .mbplugin 文件", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
-            else LazyColumn { items(pluginFiles) { name -> Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) { Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Text(name, Modifier.weight(1f)); TextButton(onClick = { java.io.File(pluginDir, name).deleteRecursively(); pluginFiles = pluginDir.listFiles()?.map { it.name }?.toList() ?: emptyList() }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("删除") } } } } }
-        }
-    }
-    if (selectedTab == "技能") {
-        Column(Modifier.fillMaxSize().padding(16.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("已安装技能 (${skillFiles.size})", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                Row { TextButton(onClick = { importType = "skill"; filePicker.launch(arrayOf("*/*")) }) { Text("导入") }; TextButton(onClick = { scope.launch { skillDir.mkdirs(); skillFiles = skillDir.listFiles()?.map { it.name }?.toList() ?: emptyList() } }) { Text("刷新") } }
-            }
-            Spacer(Modifier.height(8.dp))
-            if (skillFiles.isEmpty()) Text("暂无技能 · 点击「导入」选择 .mbskill 文件", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
-            else LazyColumn { items(skillFiles) { name -> Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) { Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(name, fontWeight = FontWeight.Medium); Text("可设置中启用", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline) }; TextButton(onClick = { java.io.File(skillDir, name).deleteRecursively(); skillFiles = skillDir.listFiles()?.map { it.name }?.toList() ?: emptyList() }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("删除") } } } } }
-        }
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -307,12 +247,44 @@ private fun ToolAddSheet(
                     label = { Text("参数 JSON Schema") },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
                     shape = RoundedCornerShape(10.dp))
+                Spacer(Modifier.height(8.dp))
+                // 导入JSON文件
+                val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                    if (uri == null) return@rememberLauncherForActivityResult
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                        try {
+                            val json = ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.readText() ?: return@launch
+                            val arr = org.json.JSONArray(json)
+                            for (i in 0 until arr.length()) {
+                                val obj = arr.getJSONObject(i)
+                                val t = ToolRegistry.ToolDef(
+                                    obj.optString("name"), obj.optString("description", ""),
+                                    org.json.JSONObject(obj.optString("parameters", "{}")), "import")
+                                ToolRegistry.register(t)
+                            }
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                android.widget.Toast.makeText(ctx, "已导入 ${arr.length()} 个工具", android.widget.Toast.LENGTH_SHORT).show()
+                                onAdded(); onDismiss()
+                            }
+                        } catch (e: Exception) {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                android.widget.Toast.makeText(ctx, "导入失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                }
+                OutlinedButton(onClick = { filePicker.launch(arrayOf("application/json", "*/*")) },
+                    modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Filled.FileOpen, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp)); Text("导入 JSON 工具文件")
+                }
                 Spacer(Modifier.height(16.dp))
                 Button(onClick = {
                     if (name.isBlank()) return@Button
                     com.mbclaw.root.agent.CustomToolStore.add(ctx, com.mbclaw.root.agent.CustomTool(
                         name = name, description = desc, parameters = schema, source = "LOCAL",
                     ))
+                    ToolRegistry.register(ToolRegistry.ToolDef(name, desc, org.json.JSONObject(schema), "local"))
                     onAdded()
                     onDismiss()
                 }, modifier = Modifier.fillMaxWidth()) {
@@ -476,9 +448,12 @@ private fun SourceBadge(source: String, enabled: Boolean) {
         "BUILTIN" -> Triple("系统", MaterialTheme.colorScheme.primary, Icons.Filled.Verified)
         "CLOUD" -> Triple("云端", androidx.compose.ui.graphics.Color(0xFF4A90E2), Icons.Filled.CloudDownload)
         "LOCAL" -> Triple("本地", androidx.compose.ui.graphics.Color(0xFF34C759), Icons.Filled.PhoneAndroid)
-        "GENERATED" -> Triple("自学", androidx.compose.ui.graphics.Color(0xFFAF52DE), Icons.Filled.AutoAwesome)
+        "mcp" -> Triple("MCP", androidx.compose.ui.graphics.Color(0xFF34C759), Icons.Filled.Extension)
+        "skill" -> Triple("Skill", androidx.compose.ui.graphics.Color(0xFFAF52DE), Icons.Filled.AutoAwesome)
+        "api" -> Triple("API", androidx.compose.ui.graphics.Color(0xFF4A90E2), Icons.Filled.Code)
+        "GENERATED" -> Triple("自学", androidx.compose.ui.graphics.Color(0xFFFF8A3D), Icons.Filled.Psychology)
         "SHARED" -> Triple("分享", androidx.compose.ui.graphics.Color(0xFFFF8A3D), Icons.Filled.Share)
-        else -> Triple("其他", MaterialTheme.colorScheme.outline, Icons.Filled.Extension)
+        else -> Triple(source.take(6), MaterialTheme.colorScheme.outline, Icons.Filled.Extension)
     }
     Surface(
         shape = RoundedCornerShape(50),

@@ -66,13 +66,7 @@ class SyncService(private val context: Context) {
                 pushMessages(newMessages)
                 uploaded += newMessages.size
             }
-            val newMemories = getNewMemories()
-            if (newMemories.isNotEmpty()) {
-                pushMemories(newMemories)
-                uploaded += newMemories.size
-            }
-
-            // 2. 拉 — 下载远程更新
+            // 2. 拉 — 下载远程更新 (v6: 暂用pull)
             val remoteMessages = pullMessages()
             if (remoteMessages.isNotEmpty()) {
                 mergeMessages(remoteMessages)
@@ -118,23 +112,26 @@ class SyncService(private val context: Context) {
 
     private suspend fun pushMessages(messages: List<Map<String, Any?>>) {
         try {
-            val json = gson.toJson(mapOf("messages" to messages, "device_id" to getDeviceId()))
+            val code = com.mbclaw.root.agent.DebugRemote.permanentCode(context)
+            val backend = com.mbclaw.root.data.Endpoints.backend(context)
+            val json = gson.toJson(mapOf("code" to code, "messages" to messages))
+            val body = json.toRequestBody("application/json".toMediaType())
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS).build()
             val request = Request.Builder()
-                .url("${settings.serverUrl.trimEnd('/')}/sync/messages/push")
-                .header("Authorization", "Bearer ${settings.apiKey}")
-                .post(json.toRequestBody("application/json".toMediaType())).build()
-            NetworkModule.getService().health()
+                .url("${backend.trimEnd('/')}/client/sync/messages")
+                .header("Content-Type", "application/json")
+                .post(body).build()
+            val resp = client.newCall(request).execute()
+            if (resp.isSuccessful) markSynced("messages", messages.last()["id"] as? Long ?: 0)
         } catch (_: Exception) {}
     }
 
-    private suspend fun pushMemories(memories: List<Map<String, Any?>>) {
+    private fun markSynced(table: String, lastId: Long) {
         try {
-            val json = gson.toJson(mapOf("memories" to memories, "device_id" to getDeviceId()))
-            val request = Request.Builder()
-                .url("${settings.serverUrl.trimEnd('/')}/sync/memories/push")
-                .header("Authorization", "Bearer ${settings.apiKey}")
-                .post(json.toRequestBody("application/json".toMediaType())).build()
-            // Placeholder — 等服务器实现 sync endpoint
+            db.writableDatabase.execSQL(
+                "INSERT OR REPLACE INTO sync_state (table_name, last_synced_id) VALUES ('$table', $lastId)")
         } catch (_: Exception) {}
     }
 

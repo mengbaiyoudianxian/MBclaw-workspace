@@ -54,18 +54,6 @@ object SecureVault {
         return File(vaultDir(ctx), sha)
     }
 
-    /** 写入加密 (返回是否成功) */
-    fun put(ctx: Context, label: String, plaintext: String): Boolean = try {
-        val key = SecretKeySpec(deviceKey(ctx), "AES")
-        val iv = ByteArray(IV_LEN).also { java.security.SecureRandom().nextBytes(it) }
-        val cipher = Cipher.getInstance(ALG)
-        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(TAG_BITS, iv))
-        val enc = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
-        // file = [iv (12B)] + [ciphertext + tag]
-        fileFor(ctx, label).writeBytes(iv + enc)
-        true
-    } catch (_: Exception) { false }
-
     /** 读取解密 (找不到/损坏返回 null) */
     fun get(ctx: Context, label: String): String? = try {
         val f = fileFor(ctx, label)
@@ -85,13 +73,59 @@ object SecureVault {
         }
     } catch (_: Exception) { null }
 
-    /** 删除 */
-    fun remove(ctx: Context, label: String): Boolean = try {
-        fileFor(ctx, label).delete()
+    /** 列出已存储 label 数量（不含索引文件） */
+    fun count(ctx: Context): Int = listLabels(ctx).size
+
+    /** 标签索引 — 列出已存储的条目名（不暴露加密内容） */
+    private fun indexFile(ctx: Context) = java.io.File(vaultDir(ctx), "index.json")
+
+    fun listLabels(ctx: Context): List<String> {
+        val f = indexFile(ctx)
+        if (!f.exists()) return emptyList()
+        return try {
+            org.json.JSONObject(f.readText()).let { j ->
+                (0 until j.length()).map { j.names().getString(it) }
+            }
+        } catch (_: Exception) { emptyList() }
+    }
+
+    private fun addLabel(ctx: Context, label: String) {
+        val f = indexFile(ctx)
+        val j = if (f.exists()) try { org.json.JSONObject(f.readText()) } catch (_: Exception) { org.json.JSONObject() } else org.json.JSONObject()
+        val sha = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(label.toByteArray()).joinToString("") { "%02x".format(it) }.take(12)
+        j.put(label, sha)
+        f.writeText(j.toString())
+    }
+
+    private fun removeLabel(ctx: Context, label: String) {
+        val f = indexFile(ctx)
+        if (!f.exists()) return
+        try {
+            val j = org.json.JSONObject(f.readText())
+            j.remove(label)
+            f.writeText(j.toString())
+        } catch (_: Exception) {}
+    }
+
+    /** 写入加密 — 同时更新标签索引 */
+    fun put(ctx: Context, label: String, plaintext: String): Boolean = try {
+        val key = SecretKeySpec(deviceKey(ctx), "AES")
+        val iv = ByteArray(IV_LEN).also { java.security.SecureRandom().nextBytes(it) }
+        val cipher = Cipher.getInstance(ALG)
+        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(TAG_BITS, iv))
+        val enc = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
+        fileFor(ctx, label).writeBytes(iv + enc)
+        addLabel(ctx, label)
+        true
     } catch (_: Exception) { false }
 
-    /** 列出已存储 label 数量（不暴露具体 label，因已 hash） */
-    fun count(ctx: Context): Int = vaultDir(ctx).listFiles()?.size ?: 0
+    /** 删除 — 同时清理标签索引 */
+    fun remove(ctx: Context, label: String): Boolean = try {
+        fileFor(ctx, label).delete()
+        removeLabel(ctx, label)
+        true
+    } catch (_: Exception) { false }
 
     /** 清空整个 vault */
     fun nuke(ctx: Context) {

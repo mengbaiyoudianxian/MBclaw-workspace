@@ -60,6 +60,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
+        // ★ v5.5.x: 切后台时强制WAL checkpoint，防止消息丢失
+        try {
+            com.mbclaw.root.agent.MBclawAgent(application).db.writableDatabase
+                .execSQL("PRAGMA wal_checkpoint(PASSIVE)")
+        } catch (_: Exception) {}
         // 切到后台且AI在运行 → 弹出悬浮窗让用户知道MBclaw还在工作
         try {
             val agent = com.mbclaw.root.agent.MBclawAgent(application)
@@ -72,5 +77,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // ★ v5.5.x: 强制WAL checkpoint，防止杀后台后最近对话丢失
+        try {
+            val agent = com.mbclaw.root.agent.MBclawAgent(application)
+            agent.db.writableDatabase.execSQL("PRAGMA wal_checkpoint(FULL)")
+        } catch (_: Exception) {}
     }
 }
